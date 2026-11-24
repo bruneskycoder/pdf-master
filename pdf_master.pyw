@@ -509,18 +509,25 @@ def op_merge(c):
         blancos += 1
     pie = c.get("pie") or ""
     if pie:
+        # Fuente incrustada con Unicode: la Helvetica básica de PDF no tiene la raya
+        # larga y la imprimía como "·" (antes, como "?").
+        fuente = pymupdf.Font("helv")
         total = len(out)
         for k in range(total):
             pg = out[k]
             txt = (pie.replace("[PAGINA]", str(k + 1)).replace("[TOTAL]", str(total))
                    .replace("[ARCHIVO]", origen[k]))
-            txt = txt.encode("cp1252", "replace").decode("cp1252")
-            ancho = pymupdf.get_text_length(txt, fontname="helv", fontsize=9)
+            pg.insert_font(fontname="pie", fontbuffer=fuente.buffer)
+            ancho = fuente.text_length(txt, fontsize=9)
             x = (pg.rect.width - ancho) / 2
             y = pg.rect.height - 18
             pt = pymupdf.Point(x, y) * pg.derotation_matrix
-            pg.insert_text(pt, txt, fontsize=9, fontname="helv", color=(0.25, 0.25, 0.25),
+            pg.insert_text(pt, txt, fontsize=9, fontname="pie", color=(0.25, 0.25, 0.25),
                            rotate=pg.rotation)
+        try:
+            out.subset_fonts()
+        except Exception:
+            pass
     total = len(out)
     guardar(out, c["salida"], garbage=3, deflate=True)
     return {"total": total, "blancos": blancos, "errores": errores}
