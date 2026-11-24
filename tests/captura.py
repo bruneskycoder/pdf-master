@@ -68,12 +68,14 @@ def principal():
     for linea in ("--- Procesando ---", "OK  TP 1 - Introducción.docx", "OK  TP 2 - Señales y sistemas.docx",
                   "ERROR  TP 10 - Conclusión.docx: el archivo está abierto en otro programa"):
         app._log(linea)
-    app.v_status.set("Convirtiendo 3 de 5…")
-    app.after(800, trabajando)
+    app.v_status.set("OK  TP 2 - Señales y sistemas.docx")
+    app.teatro = pm.Teatro(app, app.medio)
+    app.after(3200, trabajando)
 
 
 def trabajando():
     foto(app, "trabajando")
+    app.teatro.cerrar()
     app.trabajando = False
     app.abrir_herramientas()
     app._win_herr.geometry("+0+0")

@@ -21,7 +21,8 @@ Instrucciones para Claude Code. Quien dirige no programa profesionalmente: tiene
 5. **Textos de la interfaz y errores en español rioplatense**, claros para alguien no técnico. Sin botones ni textos de más.
 6. **Anticipar Windows:** rutas con espacios y «ñ», archivos descargados bloqueados, permisos, antivirus, WinError 10060, distintos intérpretes de Python.
 7. **Estética:** ámbar (`FG`) = información, cian (`ACENTO`) = lo que se toca. Texto con contraste de 4,5:1 o más. Fuentes VT323 (solo tamaños grandes) y Share Tech Mono; ninguna tiene flechas ni recuadros: usar «»» o palabras.
-8. **Repositorio público.** Nada de datos personales (nombres de usuario de Windows, rutas reales, ubicación, correos) en código, capturas, commits ni issues.
+8. **Los efectos de carga (`Teatro`) son sátira y no pueden mentir:** la línea «PROGRESO REAL» sale de la barra y del registro verdaderos; las frases nunca dicen cosas que el usuario pueda tomar como estado real. Un clic los oculta y `"efectos": false` los apaga.
+9. **Repositorio público.** Nada de datos personales (nombres de usuario de Windows, rutas reales, ubicación, correos) en código, capturas, commits ni issues.
 
 ## Bugs que no hay que reintroducir
 

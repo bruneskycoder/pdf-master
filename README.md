@@ -14,6 +14,12 @@ Convertí tus Word y PowerPoint a PDF de a muchos por vez y, si querés, unilos 
 - **Guarda los PDF** donde digas: junto al original, en una subcarpeta «PDF» o en otra carpeta. Antes de convertir te muestra dónde van a quedar.
 - En el botón **MÁS…**: dividir, comprimir y eliminar páginas (con miniaturas); carpetas automáticas que procesan solas lo que les pongas; enviar los PDF a PDFsam.
 
+### Sobre los efectos de carga
+
+Mientras trabaja, la ventana se llena de una lluvia de caracteres verdes y frases como «Desencriptando la voluntad del autor…» o «Consultando al Oráculo de Ctrl+P…». Es una sátira de las películas de hackers: convertir un Word a PDF no tiene nada de épico. Lo único verdadero en ese recuadro es la línea **PROGRESO REAL**, que sale del mismo contador que la barra de abajo. Un clic oculta los efectos; para no verlos nunca, poné `"efectos": false` en el archivo de preferencias (ver «Qué guarda en tu PC»).
+
+![Efectos de carga mientras convierte](docs/capturas/trabajando.png)
+
 ## Cómo usarlo
 
 **Necesitás:** Windows 10 u 11 y Python 3 instalado desde [python.org](https://www.python.org/downloads/) (la instalación normal ya trae lo necesario).
@@ -65,7 +71,7 @@ Decisiones técnicas que salieron de problemas reales:
 
 ## Qué no se verificó
 
-- **El aspecto en una PC con Windows real.** Las capturas de este README son de Linux. La integración continua corre las pruebas de interfaz y saca capturas en Windows (Python 3.12 y 3.14); los ajustes de escala de pantalla (DPI) de cada PC no los cubre.
+- **El aspecto en tu PC.** Las capturas de este README son de Linux. En Windows, la integración continua corre las pruebas de interfaz y saca capturas (Python 3.12 y 3.14): ahí se comprobó que las fuentes incluidas cargan y que la ventana se ve igual. No cubre los ajustes de escala de pantalla (DPI) de cada PC ni cómo anda la animación en una computadora lenta.
 - **Arrastrar y soltar**, y que **PDFsam** reciba los archivos que le manda el programa.
 - **La instalación de LibreOffice** en una PC limpia con permisos de administrador.
 - **La compresión** se probó con PDF sintéticos: cuánto reduce un PDF real con fotos depende del archivo.

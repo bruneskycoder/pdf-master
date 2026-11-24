@@ -11,12 +11,13 @@ Formato: versión, qué cambia para quien lo usa y, aparte, lo técnico.
 - La pantalla se ordena en tres pasos numerados: elegir archivos, dónde se guardan, convertir.
 - El menú «Más» pasa a ser el botón **MÁS…** arriba a la derecha.
 - En pantallas bajas (notebooks) la lista se achica y el resto queda visible; al abrir el registro o las opciones de unir, la ventana crece sola si hay lugar.
-- El registro marca en verde lo que salió bien y en rojo lo que falló.
+- El registro marca en verde lo que salió bien y en rojo lo que falló; si algo falló, se abre solo al terminar.
+- Efectos de carga satíricos estilo película de hackers (lluvia de caracteres y frases grandilocuentes). La línea «PROGRESO REAL» es lo único que informa; un clic los oculta y `"efectos": false` en las preferencias los apaga.
 - **Corregido:** el pie de página imprimía la raya larga (—) como un punto (·). Ahora sale bien, con acentos y comillas tipográficas.
 
 **Técnico**
 
-- 47 pruebas automáticas (pytest): motor, motor PDF, conversión real con LibreOffice e interfaz. Corren en Windows y Linux con Python 3.12 y 3.14.
+- 52 pruebas automáticas (pytest): motor, motor PDF, conversión real con LibreOffice e interfaz. Corren en Windows y Linux con Python 3.12 y 3.14.
 - El pie usa una fuente incrustada con Unicode y recortada a los caracteres usados (unos 15 KB por PDF unido).
 - El registro de errores al abrir pasa a `pdf_master_error.log`.
 

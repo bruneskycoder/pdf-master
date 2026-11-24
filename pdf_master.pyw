@@ -1250,6 +1250,179 @@ def _tipo(p: Path):
     return "PDF" if e == ".pdf" else ("PowerPoint" if e in (".pptx", ".ppt") else "Word")
 
 
+class Teatro:
+    """Efectos de carga de película de hackers, a propósito exagerados: es sátira.
+    Regla: lo único que informa algo es la línea «PROGRESO REAL», que sale de la barra y del
+    registro verdaderos. Todo lo demás es decorado. Un clic lo oculta."""
+
+    CARACTERES = "0123456789ABCDEFHKMNXZ$#%&*+=<>:;?¥§¤ÆØßÞðµ¶"  # todos existen en VT323
+    VERDES = ("#eaffea", "#a8f5b0", "#5fd36f", "#2f8a3e", "#1a4a24")  # de la cabeza a la cola
+    FRASES = (
+        "Inicializando protocolo de conversión…",
+        "Desencriptando la voluntad del autor…",
+        "Negociando con los márgenes de Word…",
+        "Reticulando splines tipográficas…",
+        "Consultando al Oráculo de Ctrl+P…",
+        "Siguiendo al conejo blanco por la carpeta…",
+        "Tomando la pastilla roja…",
+        "Esquivando balas en cámara lenta…",
+        "Compilando la entropía del documento…",
+        "Calibrando el condensador de páginas…",
+        "Persuadiendo a PowerPoint de que suelte las diapositivas…",
+        "Alineando bits con la Ley de Murphy…",
+        "Hackeando el mainframe…",
+        "Inyectando café en el kernel…",
+        "Contando páginas impares con los dedos…",
+    )
+    PASO_MS = 70          # cuadro de animación
+    PAUSA_FRASE_MS = 1500  # cuánto queda cada frase ya escrita
+    FINAL_MS = 1800        # cuánto queda el cartel final
+
+    def __init__(self, app, anfitrion):
+        import random
+        self.app, self.azar = app, random.Random()
+        self.c = tk.Canvas(anfitrion, background=BG, highlightthickness=0, cursor="hand2")
+        self.c.place(x=0, y=0, relwidth=1, relheight=1)
+        self.c.bind("<Button-1>", lambda e: self.cerrar())
+        self.c.bind("<Configure>", lambda e: self._armar())
+        self.celdas, self.columnas = [], []
+        self.frases = []
+        self.frase, self.escritos, self.espera = "", 0, 0
+        self.final = None
+        self.vivo = True
+        self.fuente_lluvia = (app.fam_titulo, 17)
+        self._armar()
+        self._cuadro()
+
+    # ---------------------------------------------------------------- dibujo
+    def _armar(self):
+        c = self.c
+        ancho, alto = max(c.winfo_width(), 40), max(c.winfo_height(), 40)
+        if getattr(self, "_tam", None) == (ancho, alto):
+            return
+        self._tam = (ancho, alto)
+        c.delete("all")
+        self.cw, self.ch = 13, 17
+        self.ncol, self.nfil = ancho // self.cw + 1, alto // self.ch + 1
+        self.celdas = [[c.create_text(x * self.cw + 6, y * self.ch + 8, text="", fill=BG,
+                                      font=self.fuente_lluvia)
+                        for y in range(self.nfil)] for x in range(self.ncol)]
+        self.columnas = [self._columna(nueva=True) for _ in range(self.ncol)]
+        # recuadro central
+        pw, ph = min(640, ancho - 40), 132
+        x0, y0 = (ancho - pw) / 2, max((alto - ph) / 2, 4)
+        c.create_rectangle(x0, y0, x0 + pw, y0 + ph, fill=BG, outline=ACENTO, width=2, tags="panel")
+        c.create_rectangle(x0 + 5, y0 + 5, x0 + pw - 5, y0 + ph - 5, outline=LINEA, tags="panel")
+        f = self.app.fam
+        self.t_frase = c.create_text(x0 + 22, y0 + 38, anchor="w", fill=VERDE, tags="panel",
+                                     font=(self.app.fam_titulo, 24), width=pw - 44)
+        self.t_real = c.create_text(x0 + 22, y0 + 82, anchor="w", fill=FG, tags="panel",
+                                    font=(f, 10), width=pw - 44)
+        self.t_nota = c.create_text(x0 + 22, y0 + 110, anchor="w", fill=TENUE, tags="panel",
+                                    font=(f, 9), width=pw - 44,
+                                    text="* Efectos 100 % decorativos. Ningún mainframe fue "
+                                         "vulnerado. Tocá para ocultar.")
+        c.tag_raise("panel")
+        if self.final:
+            self._aplicar_final()
+
+    def _columna(self, nueva=False):
+        a = self.azar
+        return {"cab": -a.randint(0, self.nfil * (2 if nueva else 1)), "largo": a.randint(5, 16),
+                "cada": a.choice((1, 1, 2, 3)), "tic": 0}
+
+    def _pintar(self, x, y, color, letra=None):
+        if 0 <= y < self.nfil:
+            if letra is None:
+                self.c.itemconfigure(self.celdas[x][y], fill=color)
+            else:
+                self.c.itemconfigure(self.celdas[x][y], fill=color, text=letra)
+
+    def _lluvia(self):
+        a, V = self.azar, self.VERDES
+        for x, col in enumerate(self.columnas):
+            col["tic"] += 1
+            if col["tic"] < col["cada"]:
+                continue
+            col["tic"] = 0
+            col["cab"] += 1
+            y, L = col["cab"], col["largo"]
+            self._pintar(x, y, V[0], a.choice(self.CARACTERES))
+            self._pintar(x, y - 1, V[1])
+            self._pintar(x, y - 3, V[2])
+            self._pintar(x, y - L // 2, V[3])
+            self._pintar(x, y - L + 1, V[4])
+            self._pintar(x, y - L, BG)
+            if y - L > self.nfil:
+                self.columnas[x] = self._columna()
+        for _ in range(max(self.ncol // 4, 1)):  # parpadeo de caracteres sueltos
+            x, y = a.randrange(self.ncol), a.randrange(self.nfil)
+            self.c.itemconfigure(self.celdas[x][y], text=a.choice(self.CARACTERES))
+
+    def _texto(self):
+        if self.final:
+            return
+        if self.escritos < len(self.frase):
+            self.escritos += 1
+        elif self.espera > 0:
+            self.espera -= self.PASO_MS
+        else:
+            if not self.frases:
+                self.frases = list(self.FRASES[1:])
+                self.azar.shuffle(self.frases)
+                if not self.frase:
+                    self.frases.insert(0, self.FRASES[0])
+            self.frase, self.escritos = self.frases.pop(0), 0
+            self.espera = self.PAUSA_FRASE_MS
+        cursor = "_" if (self.escritos < len(self.frase) or self.espera // 400 % 2) else " "
+        self.c.itemconfigure(self.t_frase, text=self.frase[:self.escritos] + cursor)
+        self.c.itemconfigure(self.t_real, text="PROGRESO REAL: " + self.progreso_real())
+
+    def progreso_real(self):
+        b = self.app.barra
+        maximo, valor = float(b.cget("maximum")), float(b.cget("value"))
+        estado = (self.app.v_status.get() or "trabajando…").strip()
+        if maximo > 1:
+            return f"{int(valor)} de {int(maximo)} ({valor / maximo:.0%}) · {estado}"[:90]
+        return estado[:90]
+
+    def _cuadro(self):
+        if not self.vivo:
+            return
+        try:
+            self._lluvia()
+            self._texto()
+        except tk.TclError:
+            self.vivo = False
+            return
+        self.c.after(self.PASO_MS, self._cuadro)
+
+    # --------------------------------------------------------------- control
+    def terminar(self, con_error=False):
+        """Cartel final, y se va solo."""
+        if not self.vivo:
+            return
+        self.final = (("COMPLETADO CON OBSERVACIONES", ROJO,
+                       "Algo falló de verdad: te abrí el registro.") if con_error else
+                      ("OPERACIÓN COMPLETADA", VERDE, "Ningún sistema fue hackeado en el proceso."))
+        self._aplicar_final()
+        self.c.after(self.FINAL_MS * (2 if con_error else 1), self.cerrar)
+
+    def _aplicar_final(self):
+        titulo, color, sub = self.final
+        self.c.itemconfigure(self.t_frase, text=titulo, fill=color)
+        self.c.itemconfigure(self.t_real, text=sub)
+
+    def cerrar(self):
+        self.vivo = False
+        try:
+            self.c.destroy()
+        except tk.TclError:
+            pass
+        if self.app.teatro is self:
+            self.app.teatro = None
+
+
 class App(_BaseTk):
     def __init__(self):
         registrar_fuentes()
@@ -1270,6 +1443,7 @@ class App(_BaseTk):
         self.hubo_error = False
         self.ultima_fusion = None
         self.vigilante = None
+        self.teatro = None
         self.reglas = list(self.cfg.get("reglas", []))
         self.herr_pdfs = []
         self._win_herr = self._win_auto = None
@@ -2040,8 +2214,13 @@ class App(_BaseTk):
 
     def _iniciar(self, funcion, args):
         self.trabajando = True
+        self.hubo_error = False
         self.btn_conv.config(state="disabled")
         self._cursor()
+        if self.teatro:
+            self.teatro.cerrar()
+        if self.cfg.get("efectos", True):  # se apagan con "efectos": false en la config
+            self.teatro = Teatro(self, self.medio)
         self.barra.config(maximum=1, value=0)
         emit = lambda t, d: self.cola.put((t, d))
         threading.Thread(target=funcion, args=(*args, emit), daemon=True).start()
@@ -2096,6 +2275,10 @@ class App(_BaseTk):
                         self.v_status.set(dato.strip().splitlines()[0][:110])
                     self.trabajando = False
                     self.btn_conv.config(state="normal")
+                    if self.hubo_error and not self.log_visible:
+                        self._alternar_log()
+                    if self.teatro:
+                        self.teatro.terminar(self.hubo_error)
                     self._estado_lo()
                     self._pedir_paginas()
         except queue.Empty:
@@ -2168,6 +2351,8 @@ class App(_BaseTk):
         tag = ("error" if "ERROR" in texto or "error:" in texto
                or inicio.startswith(("No se pudo", "No pude", "Error"))
                else "ok" if inicio.startswith(("OK", "FUSIONADO", "Listo")) else ())
+        if tag == "error":
+            self.hubo_error = True
         self.log.insert("end", texto + "\n", tag)
         self.log.see("end")
         self.log.config(state="disabled")

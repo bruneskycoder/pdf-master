@@ -59,3 +59,61 @@ def test_ruta_corta(pm):
     corta = pm.App._corta(largo, 40)
     assert len(corta) <= 42 and corta.endswith("PDF") and "…" in corta
     assert pm.App._corta("C:/corta", 40) == "C:/corta"
+
+
+# ------------------------------------------------------------- efectos (sátira)
+def _esperar(app, condicion, segundos=5):
+    import time
+    fin = time.time() + segundos
+    while time.time() < fin and not condicion():
+        app.update()
+        time.sleep(0.02)
+    return condicion()
+
+
+def test_efectos_aparecen_al_trabajar_y_se_van_solos(app, pm, monkeypatch):
+    monkeypatch.setattr(pm.Teatro, "FINAL_MS", 200)
+
+    def falso(emit):
+        emit("max", 2)
+        emit("prog", 1)
+        emit("log", "OK  uno.docx")
+
+    app._iniciar(falso, ())
+    assert app.teatro is not None
+    assert _esperar(app, lambda: "1 de 2 (50%)" in app.teatro.progreso_real())
+    app.cola.put(("fin", "Listo."))
+    assert _esperar(app, lambda: app.teatro is None)
+    assert str(app.btn_conv.cget("state")) == "normal"
+
+
+def test_con_error_abre_el_registro(app, pm, monkeypatch):
+    monkeypatch.setattr(pm.Teatro, "FINAL_MS", 200)
+    app._iniciar(lambda emit: (emit("log", "ERROR  x.docx: dañado"), emit("fin", "Listo.")), ())
+    assert _esperar(app, lambda: app.log_visible)
+    assert app.teatro is None or app.teatro.final[0] == "COMPLETADO CON OBSERVACIONES"
+
+
+def test_un_clic_oculta_los_efectos(app):
+    app._iniciar(lambda emit: None, ())
+    app.update()
+    app.teatro.c.event_generate("<Button-1>", x=5, y=5, when="now")
+    app.update()
+    assert app.teatro is None
+
+
+def test_efectos_se_pueden_apagar(app):
+    app.cfg["efectos"] = False
+    app._iniciar(lambda emit: emit("fin", "Listo."), ())
+    assert app.teatro is None
+
+
+def test_lluvia_aguanta_ventanas_chicas(app, pm):
+    app.geometry("860x620")
+    app._alternar_log()
+    app._iniciar(lambda emit: None, ())
+    for _ in range(60):
+        app.teatro._cuadro()
+    app.update()
+    assert app.teatro.vivo
+    assert set(pm.Teatro.CARACTERES) <= set(map(chr, range(32, 256)))  # todos están en VT323
