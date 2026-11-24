@@ -1387,15 +1387,25 @@ class Teatro:
         return estado[:90]
 
     def _cuadro(self):
+        """Un cuadro de animación. Hay un solo bucle aunque se lo llame varias veces, y si
+        un cuadro tarda (PC lenta), el siguiente espera más: la ventana nunca se traba."""
+        if getattr(self, "_proximo", None):
+            try:
+                self.c.after_cancel(self._proximo)
+            except (tk.TclError, ValueError):
+                pass
+            self._proximo = None
         if not self.vivo:
             return
+        inicio = time.perf_counter()
         try:
             self._lluvia()
             self._texto()
         except tk.TclError:
             self.vivo = False
             return
-        self.c.after(self.PASO_MS, self._cuadro)
+        demora = int((time.perf_counter() - inicio) * 1000)
+        self._proximo = self.c.after(max(self.PASO_MS, demora * 3), self._cuadro)
 
     # --------------------------------------------------------------- control
     def terminar(self, con_error=False):

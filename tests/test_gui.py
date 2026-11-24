@@ -113,7 +113,19 @@ def test_lluvia_aguanta_ventanas_chicas(app, pm):
     app._alternar_log()
     app._iniciar(lambda emit: None, ())
     for _ in range(60):
-        app.teatro._cuadro()
+        app.teatro._lluvia()
+        app.teatro._texto()
     app.update()
     assert app.teatro.vivo
     assert set(pm.Teatro.CARACTERES) <= set(map(chr, range(32, 256)))  # todos están en VT323
+
+
+def test_la_animacion_es_un_solo_bucle(app):
+    """Llamarla varias veces no apila bucles: antes eso colgó la CI de Windows."""
+    app._iniciar(lambda emit: None, ())
+    pendientes_antes = len(app.tk.call("after", "info"))
+    for _ in range(20):
+        app.teatro._cuadro()
+    assert len(app.tk.call("after", "info")) == pendientes_antes
+    app.update()
+    assert app.teatro.vivo
