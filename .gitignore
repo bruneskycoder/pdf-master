@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.spec
+capturas-windows/
+pdf_master_error.log
+.DS_Store
+Thumbs.db

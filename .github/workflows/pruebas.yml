@@ -1,0 +1,40 @@
+name: pruebas
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Dependencias de prueba
+        run: python -m pip install pytest pymupdf pillow
+      - name: Pruebas (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pytest -q -rs
+      - name: Pruebas (Linux, con pantalla virtual)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -q xvfb > /dev/null
+          xvfb-run -a python -m pytest -q -rs
+      - name: Capturas de la interfaz en Windows
+        if: runner.os == 'Windows' && matrix.python == '3.14'
+        run: python tests/captura.py capturas-windows
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows' && matrix.python == '3.14'
+        with:
+          name: capturas-windows
+          path: capturas-windows/
