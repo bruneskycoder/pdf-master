@@ -46,7 +46,7 @@ except Exception:
     _BaseTk = tk.Tk
     HAY_DND = False
 
-VERSION = "5.0"
+VERSION = "5.1"
 CONVERTIBLES = {".docx", ".doc", ".pptx", ".ppt"}
 EXT = CONVERTIBLES | {".pdf"}
 CONFIG = Path.home() / ".convertidor_word_pdf.json"
@@ -1032,10 +1032,10 @@ class DialogoPaginas(tk.Toplevel):
 
         barra = ttk.Frame(self)
         barra.pack(fill="x", padx=8, pady=6)
-        ttk.Button(barra, text="Marcar impares", command=lambda: self._marcar(lambda n: n % 2 == 1)).pack(side="left")
-        ttk.Button(barra, text="Marcar pares", command=lambda: self._marcar(lambda n: n % 2 == 0)).pack(side="left", padx=4)
-        ttk.Button(barra, text="Marcar intervalo…", command=self._intervalo).pack(side="left")
-        ttk.Button(barra, text="Desmarcar todas", command=lambda: self._marcar(lambda n: False)).pack(side="left", padx=4)
+        ttk.Button(barra, text="[Marcar impares]", command=lambda: self._marcar(lambda n: n % 2 == 1)).pack(side="left")
+        ttk.Button(barra, text="[Marcar pares]", command=lambda: self._marcar(lambda n: n % 2 == 0)).pack(side="left", padx=4)
+        ttk.Button(barra, text="[Marcar intervalo…]", command=self._intervalo).pack(side="left")
+        ttk.Button(barra, text="[Desmarcar todas]", command=lambda: self._marcar(lambda n: False)).pack(side="left", padx=4)
         self.v_estado = tk.StringVar(value="Generando miniaturas…")
         ttk.Label(barra, textvariable=self.v_estado, style="Muted.TLabel").pack(side="right")
 
@@ -1044,8 +1044,8 @@ class DialogoPaginas(tk.Toplevel):
         self.v_reemplazar = tk.BooleanVar(value=False)
         ttk.Checkbutton(pie, text="Reemplazar el PDF original (si no, crea “… (sin páginas).pdf”)",
                         variable=self.v_reemplazar).pack(side="left")
-        ttk.Button(pie, text="Cancelar", command=self._cerrar).pack(side="right")
-        self.btn_guardar = ttk.Button(pie, text="ELIMINAR LAS MARCADAS", command=self._guardar,
+        ttk.Button(pie, text="[Cancelar]", command=self._cerrar).pack(side="right")
+        self.btn_guardar = ttk.Button(pie, text="[ ELIMINAR LAS MARCADAS ]", command=self._guardar,
                                       style="Accent.TButton", state="disabled")
         self.btn_guardar.pack(side="right", padx=6)
 
@@ -1175,11 +1175,18 @@ class DialogoPaginas(tk.Toplevel):
 
 
 # ------------------------------------------------------------------------- GUI
-# Paleta de fósforo: ámbar = información, cian = lo que se puede tocar.
-BG, PANEL, PANEL2, LINEA = "#0d1117", "#141b24", "#1b2531", "#2a3a4a"
-FG, GRIS, TENUE = "#ffb347", "#c09254", "#9a7b4c"  # contraste 10,6 · 6,7 · 4,8
-ACENTO, ACENTO2, ACENTO_OSC = "#4dd9e8", "#9beef6", "#163b42"
-TINTA, ROJO, VERDE = "#071014", "#ff6b6b", "#7ee787"
+# Pantalla de fósforo verde. Verde fuerte (y entre corchetes) = lo que se toca; verde suave =
+# información; verde pálido = lo importante; ámbar = advertencia; rojo = error.
+# Contraste de texto sobre el fondo: 5,4:1 o más.
+BG, PANEL, PANEL2, LINEA = "#030704", "#081409", "#0d2010", "#1d4a22"
+FG, GRIS, TENUE = "#8ee67f", "#5fae55", "#4d9446"
+ACENTO, ACENTO2, ACENTO_OSC = "#39ff14", "#d2ffc8", "#0f3d12"
+TINTA, ROJO, VERDE, AMBAR = "#030704", "#ff5a4a", "#d2ffc8", "#ffc43d"
+BRILLO = "#12400f"   # halo alrededor del texto de fósforo
+BARRIDO = "#07120a"  # líneas de barrido de la pantalla
+
+EFECTOS = ("completos", "reducidos", "apagados")
+GLIFOS = "0123456789ABCDEFHKMNXZ$#%&*+=<>:;?¥§¤ÆØßÞðµ¶"  # todos existen en VT323
 
 FUENTE_TITULO, FUENTE_TEXTO = "VT323", "Share Tech Mono"
 
@@ -1250,79 +1257,493 @@ def _tipo(p: Path):
     return "PDF" if e == ".pdf" else ("PowerPoint" if e in (".pptx", ".ppt") else "Word")
 
 
-class Teatro:
-    """Efectos de carga de película de hackers, a propósito exagerados: es sátira.
-    Regla: lo único que informa algo es la línea «PROGRESO REAL», que sale de la barra y del
-    registro verdaderos. Todo lo demás es decorado. Un clic lo oculta."""
+def animaciones_del_sistema():
+    """False si en Windows está apagado «Mostrar animaciones» (Accesibilidad)."""
+    if not ES_WINDOWS:
+        return True
+    try:
+        import ctypes
+        valor = ctypes.c_int(1)
+        if ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(valor), 0):
+            return bool(valor.value)
+    except Exception:
+        pass
+    return True
 
-    CARACTERES = "0123456789ABCDEFHKMNXZ$#%&*+=<>:;?¥§¤ÆØßÞðµ¶"  # todos existen en VT323
-    VERDES = ("#eaffea", "#a8f5b0", "#5fd36f", "#2f8a3e", "#1a4a24")  # de la cabeza a la cola
-    FRASES = (
-        "Inicializando protocolo de conversión…",
-        "Desencriptando la voluntad del autor…",
-        "Negociando con los márgenes de Word…",
-        "Reticulando splines tipográficas…",
-        "Consultando al Oráculo de Ctrl+P…",
-        "Siguiendo al conejo blanco por la carpeta…",
-        "Tomando la pastilla roja…",
-        "Esquivando balas en cámara lenta…",
-        "Compilando la entropía del documento…",
-        "Calibrando el condensador de páginas…",
-        "Persuadiendo a PowerPoint de que suelte las diapositivas…",
-        "Alineando bits con la Ley de Murphy…",
-        "Hackeando el mainframe…",
-        "Inyectando café en el kernel…",
-        "Contando páginas impares con los dedos…",
+
+def modo_efectos(cfg):
+    """completos · reducidos (sin movimiento) · apagados (sin movimiento ni sátira)."""
+    e = cfg.get("efectos")
+    if e is False:
+        return "apagados"
+    if e is True:
+        return "completos"
+    if e in EFECTOS:
+        return e
+    return "completos" if animaciones_del_sistema() else "reducidos"
+
+
+def espacio_libre(ruta):
+    """Bytes libres en el disco de 'ruta' (o de su carpeta existente más cercana)."""
+    try:
+        p = Path(ruta)
+        while not p.exists() and p != p.parent:
+            p = p.parent
+        return shutil.disk_usage(p).free
+    except Exception:
+        return None
+
+
+def en_gb(n):
+    return f"{n / 1024 ** 3:.1f}".replace(".", ",") + " GB"
+
+
+def barrido(canvas, ancho, alto, paso=3):
+    """Líneas de barrido de CRT, por debajo de todo lo demás."""
+    for y in range(0, int(alto), paso):
+        canvas.create_line(0, y, ancho, y, fill=BARRIDO, tags="barrido")
+    canvas.tag_lower("barrido")
+
+
+def texto_fosforo(canvas, x, y, texto, fuente, color=ACENTO, tags=(), **kw):
+    """Texto con halo de fósforo: copias oscuras corridas un píxel y el texto encima."""
+    tags = tuple(tags) if isinstance(tags, (tuple, list)) else (tags,)
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)):
+        canvas.create_text(x + dx, y + dy, text=texto, font=fuente, fill=BRILLO,
+                           tags=tags + ("halo",), **kw)
+    return canvas.create_text(x, y, text=texto, font=fuente, fill=color, tags=tags, **kw)
+
+
+class Guion:
+    """La sátira: una dependencia pública informática que se toma demasiado en serio.
+    Nada de esto informa. Lo verdadero (cantidades, rutas, tiempos) siempre lo pone el
+    programa y se muestra aparte o entre los textos, nunca inventado."""
+
+    ARRANQUE = (
+        ("PRUEBA DE MEMORIA", "655360 BYTES. ALCANZAN"),
+        ("MESA DE ENTRADAS", "ABIERTA DE 8 A 13"),
+        ("SELLOS Y FIRMAS", "EN TRÁMITE"),
+        ("PROTOCOLOS HEREDADOS", "17 CARGADOS, 3 SIN DOCUMENTAR"),
+        ("RELOJ DE PARED", "SINCRONIZADO A OJO"),
+        ("CONDENSADOR DE PÁGINAS", "CARGADO, POR AHORA"),
+        ("SUPERVISOR DE TURNO", "EN EL ALMUERZO"),
+        ("MANUAL DE PROCEDIMIENTOS", "TOMO II EXTRAVIADO"),
+        ("UNIDAD DE CINTA", "REBOBINANDO POR LAS DUDAS"),
+        ("NIVEL DE SOLEMNIDAD", "MÁXIMO"),
+        ("PERMISO DEL ARCHIVO GENERAL", "SE ASUME CONCEDIDO"),
+        ("CAFETERA DEL CUARTO PISO", "NO RESPONDE"),
+        ("ENTRELAZAMIENTO CUÁNTICO", "NO CORRESPONDE"),
     )
-    PASO_MS = 70          # cuadro de animación
+    REPOSO = (
+        "LA COMPUTADORA ESTÁ TRABAJANDO. POR FAVOR, NO LA ALIENTE.",
+        "PROCESO 0007: PENSANDO EN ALGO. NO SE INFORMARÁ EN QUÉ.",
+        "SE DETECTÓ UN OPERADOR HUMANO. SE LO TRATARÁ CON CORDIALIDAD PROTOCOLAR.",
+        "NIVEL DE MATE POR DEBAJO DEL UMBRAL RECOMENDADO. SE NOTIFICÓ A RECURSOS HUMANOS.",
+        "RECORDATORIO: TODO DOCUMENTO ES CONVERTIBLE HASTA QUE SE DEMUESTRE LO CONTRARIO.",
+        "INVENTARIO DE CLIPS: SIN NOVEDAD.",
+        "EL SISTEMA AGRADECE SU PACIENCIA. TAMBIÉN LA REGISTRA.",
+        "SE REORDENARON LOS ARCHIVADORES. NADIE LO PIDIÓ.",
+        "PRÓXIMO MANTENIMIENTO PROGRAMADO: CUANDO HAYA PRESUPUESTO.",
+        "LA IMPRESORA DEL PASILLO PREGUNTÓ POR USTED. NO SE LE DIO INFORMACIÓN.",
+        "VERIFICACIÓN DE RUTINA: LA REALIDAD LOCAL SIGUE EN SU LUGAR.",
+        "SE ARCHIVÓ UN FORMULARIO 0347-B. NO SE SABE DE QUIÉN.",
+        "INTEGRIDAD DEL SISTEMA: SATISFACTORIA. EL RESTO ESTÁ CLASIFICADO.",
+        "AVISO: EL PASILLO B PERMANECERÁ CERRADO HASTA NUEVO AVISO. NO HAY PASILLO B.",
+    )
+    TITULOS = (
+        "VERIFICANDO CREDENCIALES DEL OPERADOR…",
+        "SOLICITANDO AUTORIZACIÓN DE NIVEL 9…",
+        "CONSULTANDO ARCHIVOS QUE NO DEBERÍAN EXISTIR…",
+        "NEGOCIANDO CON LOS MÁRGENES DE WORD…",
+        "DESENCRIPTANDO LA VOLUNTAD DEL AUTOR…",
+        "PERSUADIENDO A POWERPOINT DE QUE SUELTE LAS DIAPOSITIVAS…",
+        "CALIBRANDO EL CONDENSADOR DE PÁGINAS…",
+        "CONTANDO PÁGINAS IMPARES CON LOS DEDOS…",
+        "ALINEANDO BITS CON LA LEY DE MURPHY…",
+        "ESPERANDO EL SELLO DEL SUPERVISOR…",
+        "ELEVANDO EL EXPEDIENTE A LA INSTANCIA SUPERIOR…",
+        "INYECTANDO CAFÉ EN EL NÚCLEO DEL SISTEMA…",
+    )
+    SUBPROCESOS = (
+        "CONTRASTANDO REGISTROS SECUNDARIOS",
+        "CONSULTANDO LA HORA LOCAL",
+        "CONSULTANDO OTRA VEZ LA HORA LOCAL, POR LAS DUDAS",
+        "CONFIRMANDO QUE LA SESIÓN ACTUAL EXISTE",
+        "EJECUTANDO SUMA DE COMPROBACIÓN REDUNDANTE",
+        "AUTORIZACIÓN RECIBIDA DE ORIGEN DESCONOCIDO",
+        "IGNORANDO ORIGEN DESCONOCIDO",
+        "FOTOCOPIANDO EL EXPEDIENTE POR TRIPLICADO",
+        "VERIFICANDO LA INTEGRIDAD DE LA REALIDAD LOCAL",
+        "RECALIBRANDO EXPECTATIVAS",
+        "SE DETECTÓ UN NIVEL INESPERADO DE COMPETENCIA",
+        "FINGIENDO QUE TODO ESTO ES NECESARIO",
+        "ESPERANDO QUE ATIENDAN EL INTERNO 214",
+        "SOLICITANDO SEGUNDA FIRMA",
+        "CONSULTANDO BASES DE DATOS QUE NO FIGURAN EN EL ORGANIGRAMA",
+        "REDACTANDO MEMORÁNDUM INTERNO SOBRE EL MEMORÁNDUM ANTERIOR",
+    )
+    CIERRES = (
+        "SE ARCHIVA EL EXPEDIENTE. VUELVA PRONTO.",
+        "TRÁMITE CONCLUIDO SIN NECESIDAD DE SELLADO.",
+        "LOS 47 PROTOCOLOS RESULTARON INNECESARIOS. SE CONSERVAN IGUAL.",
+        "NINGÚN SISTEMA FUE HACKEADO EN EL PROCESO.",
+        "FIRMA Y ACLARACIÓN: EL SISTEMA.",
+    )
+    # acción -> (texto llano o None, variantes satíricas). {n}, {nombre}, {exp}, {seg}: datos reales.
+    ACCIONES = {
+        "agregar": ("{n} archivo(s) en la lista.", (
+            "MESA DE ENTRADAS: {n} EXPEDIENTE(S) RECIBIDO(S). SE LABRÓ ACTA.",
+            "SE INGRESARON {n} EXPEDIENTE(S). QUEDAN EN EL ESCRITORIO DEL FONDO.",
+            "{n} DOCUMENTO(S) INCORPORADO(S) AL PADRÓN. SE LES ASIGNÓ NÚMERO DE ORDEN.")),
+        "carpeta": ("Carpeta {nombre}: {n} archivo(s) para convertir o unir.", (
+            "SE INSPECCIONÓ LA CARPETA «{nombre}». {n} EXPEDIENTE(S) ELEGIBLE(S).",
+            "RELEVAMIENTO DE «{nombre}» FINALIZADO: {n} EXPEDIENTE(S). SIN IRREGULARIDADES.")),
+        "quitar": ("{n} quitado(s) de la lista. Los archivos siguen en su carpeta.", (
+            "SE DESAFECTARON {n} EXPEDIENTE(S). LOS ORIGINALES NO FUERON TOCADOS.",)),
+        "vaciar": ("Lista vacía. Tus archivos siguen en su lugar.", (
+            "ESCRITORIO DESPEJADO. NADIE DESTRUYÓ NADA: SOLO SE DEJÓ DE MIRARLO.",)),
+        "ordenar": (None, (
+            "SE ORDENARON {n} EXPEDIENTE(S) ALFABÉTICAMENTE. EL ARCHIVO GENERAL APRUEBA.",)),
+        "mover": (None, (
+            "SE ALTERÓ EL ORDEN DE PRELACIÓN. QUEDA ASENTADO.",
+            "REUBICACIÓN DE EXPEDIENTE AUTORIZADA DE PALABRA.")),
+        "destino": ("Los PDF se van a guardar {nombre}.", (
+            "NUEVO DESTINO DE ARCHIVO: {nombre}. SE NOTIFICÓ A LAS PARTES.",)),
+        "unir_si": (None, ("SE AUTORIZÓ LA UNIFICACIÓN DE EXPEDIENTES.",)),
+        "unir_no": (None, ("SE REVOCÓ LA UNIFICACIÓN. CADA EXPEDIENTE SIGUE POR SU CUENTA.",)),
+        "inicio": (None, (
+            "SE INICIÓ EL TRÁMITE {exp} CON {n} EXPEDIENTE(S).",
+            "TRÁMITE {exp} EN CURSO: {n} EXPEDIENTE(S). NO APAGUE LA TERMINAL.")),
+        "fin": ("Listo en {seg} s.", ("TRÁMITE {exp} CONCLUIDO EN {seg} S. {cierre}",)),
+        "fin_error": ("Terminó con errores: mirá el registro.", (
+            "TRÁMITE {exp} CONCLUIDO CON OBSERVACIONES. VER REGISTRO.",)),
+        "listo": ("Listo para recibir archivos.", (
+            "TERMINAL OPERATIVA. ESPERANDO EXPEDIENTES DEL OPERADOR.",
+            "MESA DE ENTRADAS ABIERTA. TOME NÚMERO Y AGUARDE SER LLAMADO.")),
+        "curioso": (None, (
+            "SE DETECTÓ CURIOSIDAD NO AUTORIZADA. SE INICIÓ UN EXPEDIENTE. RESPUESTA "
+            "ESTIMADA: 30 A 45 DÍAS HÁBILES.",)),
+    }
+
+    def __init__(self, azar):
+        self.azar, self.mazos = azar, {}
+
+    def sacar(self, nombre):
+        """Uno al azar, sin repetir hasta agotar la lista."""
+        mazo = self.mazos.get(nombre)
+        if not mazo:
+            mazo = list(getattr(self, nombre))
+            self.azar.shuffle(mazo)
+            self.mazos[nombre] = mazo
+        return mazo.pop()
+
+    def accion(self, clave, **datos):
+        """(texto llano o None, texto satírico) con los datos reales ya puestos."""
+        llano, variantes = self.ACCIONES[clave]
+        datos.setdefault("cierre", self.sacar("CIERRES") if clave == "fin" else "")
+        sat = self.azar.choice(variantes).format(**datos)
+        return (llano.format(**datos) if llano else None), sat
+
+
+class BarraSegmentada(tk.Canvas):
+    """Barra de progreso de bloques. Se usa igual que ttk.Progressbar: config(maximum=,
+    value=) y cget("maximum") / cget("value")."""
+
+    ANCHO_SEG, HUECO = 7, 2
+
+    def __init__(self, padre, fuente=("TkFixedFont", 9), **kw):
+        super().__init__(padre, height=16, background=BG, highlightthickness=0, **kw)
+        self.fuente = fuente
+        self._maximo, self._valor, self._dibujado = 1.0, 0.0, None
+        self.bind("<Configure>", lambda e: self._dibujar(forzar=True))
+
+    def configure(self, cnf=None, **kw):
+        cambio = False
+        for clave in ("maximum", "value"):
+            if clave in kw:
+                setattr(self, "_maximo" if clave == "maximum" else "_valor", float(kw.pop(clave)))
+                cambio = True
+        r = super().configure(cnf, **kw) if (cnf or kw) else None
+        if cambio:
+            self._dibujar()
+        return r
+
+    config = configure
+
+    def cget(self, clave):
+        if clave == "maximum":
+            return self._maximo
+        if clave == "value":
+            return self._valor
+        return super().cget(clave)
+
+    def fraccion(self):
+        return max(0.0, min(1.0, self._valor / self._maximo)) if self._maximo > 0 else 0.0
+
+    def _dibujar(self, forzar=False):
+        ancho = self.winfo_width()
+        if ancho < 20:
+            return
+        paso = self.ANCHO_SEG + self.HUECO
+        n = max((ancho - 52) // paso, 1)
+        llenos = round(self.fraccion() * n)
+        clave = (ancho, llenos, self._maximo > 1 or self._valor > 0)
+        if clave == self._dibujado and not forzar:
+            return
+        self._dibujado = clave
+        self.delete("all")
+        for i in range(n):
+            x = i * paso
+            lleno = i < llenos
+            self.create_rectangle(x, 2, x + self.ANCHO_SEG, 14, width=0,
+                                  fill=ACENTO if lleno else PANEL2)
+        if clave[2]:
+            self.create_text(ancho - 2, 8, anchor="e", fill=FG, font=self.fuente,
+                             text=f"{self.fraccion():.0%}".replace("%", " %"), tags="pct")
+
+
+class Encabezado(tk.Canvas):
+    """Cabecera de terminal: marco doble, título con halo de fósforo, barrido y datos reales
+    (reloj, espacio en disco, LibreOffice). El número de sesión es decorativo."""
+
+    ALTO = 104
+
+    def __init__(self, app, padre):
+        super().__init__(padre, height=self.ALTO, background=BG, highlightthickness=0)
+        self.app = app
+        self.encendido = True
+        self.clics = []
+        self.boton = ttk.Button(self, text="[ MÁS… ]", command=app._abrir_menu)
+        self.bind("<Configure>", lambda e: self._dibujar())
+
+    def _dibujar(self):
+        a, h, app = self.winfo_width(), self.ALTO, self.app
+        if a < 50:
+            return
+        self.delete("all")
+        barrido(self, a, h)
+        self.create_rectangle(1, 1, a - 2, h - 2, outline=GRIS)
+        self.create_rectangle(5, 5, a - 6, h - 6, outline=LINEA)
+        titulo = (app.fam_titulo, 38)
+        id_t = texto_fosforo(self, 20, 34, "PDF MASTER", titulo, tags="titulo", anchor="w")
+        x1 = self.bbox(id_t)[2] + 6
+        self.create_rectangle(x1, 22, x1 + 13, 46, fill=ACENTO, width=0, tags="cursor")
+        self.create_text(20, 64, anchor="w", fill=GRIS, font=(app.fam, 9), tags="sub",
+                         text=f"DIRECCIÓN DE CONVERSIÓN DOCUMENTAL · MESA DE ENTRADAS · "
+                              f"REV. {VERSION}")
+        self.create_text(20, 84, anchor="w", fill=FG, font=(app.fam, 10),
+                         text="Convertí Word y PowerPoint a PDF. Si querés, unilos en un solo archivo.")
+        self.create_window(a - 16, 16, anchor="ne", window=self.boton)
+        xd = a - 28 - self.boton.winfo_reqwidth()
+        for i, clave in enumerate(("reloj", "lo", "disco", "sesion")):
+            self.create_text(xd, 16 + i * 18 if i < 2 else 52 + (i - 2) * 18, anchor="ne",
+                             font=(app.fam, 9), fill=TENUE if clave == "sesion" else FG,
+                             tags=clave)
+        self.tag_bind("titulo", "<Button-1>", self._clic_titulo)
+        self.cursor(self.encendido)
+        self.actualizar()
+
+    def actualizar(self):
+        app = self.app
+        lo = app.v_lo.get().upper()
+        if "NO INSTALADO" in lo:
+            lo = "LIBREOFFICE: SE INSTALA AL CONVERTIR"
+        libre = espacio_libre(app.carpeta_para_espacio())
+        for clave, texto in (("reloj", datetime.now().strftime("%d/%m/%Y  %H:%M:%S")),
+                             ("lo", lo),
+                             ("disco", f"ESPACIO LIBRE: {en_gb(libre)}" if libre else ""),
+                             ("sesion", f"SESIÓN {app.sesion}")):
+            self.itemconfigure(clave, text=texto)
+
+    def cursor(self, encendido):
+        self.encendido = encendido
+        self.itemconfigure("cursor", fill=ACENTO if encendido else BG)
+
+    def interferencia(self, paso=0):
+        """Microinterferencia: el título se corre y una banda cruza la pantalla. Muy rara."""
+        if paso == 0:
+            self.move("titulo", 2, 0)
+            self.itemconfigure("titulo&&!halo", fill=VERDE)
+            self.create_rectangle(0, 0, self.winfo_width(), 3, fill=LINEA, width=0, tags="banda")
+        elif paso == 2:
+            self.move("titulo", -2, 0)
+            self.itemconfigure("titulo&&!halo", fill=ACENTO)
+        self.move("banda", 0, 9)
+        if paso < 11:
+            self.after(30, self.interferencia, paso + 1)
+        else:
+            self.delete("banda")
+
+    def _clic_titulo(self, e):
+        ahora = time.time()
+        self.clics = [t for t in self.clics if ahora - t < 3] + [ahora]
+        if len(self.clics) >= 5:
+            self.clics = []
+            self.app.decir_accion("curioso")
+
+
+class Arranque:
+    """Secuencia de arranque de 1,5 s. Las líneas marcadas como reales informan algo cierto
+    (fuentes, LibreOffice, preferencias, disco); el resto es ambientación. Un clic o una
+    tecla la saltean."""
+
+    PASO_MS, FINAL_MS = 55, 650
+
+    def __init__(self, app):
+        self.app = app
+        self.c = tk.Canvas(app, background=BG, highlightthickness=0, cursor="hand2")
+        self.c.place(x=0, y=0, relwidth=1, relheight=1)
+        self.c.bind("<Button-1>", lambda e: self.cerrar())
+        self._tecla = app.bind("<Key>", lambda e: self.cerrar(), add="+")
+        g = app.guion
+        reales = [
+            ("FUENTES DE FÓSFORO", "CARGADAS" if app.fam_titulo == FUENTE_TITULO
+             else "NO DISPONIBLES, SE USA LA DEL SISTEMA"),
+            ("LIBREOFFICE", "LISTO" if buscar_soffice() else "NO INSTALADO, SE INSTALA AL CONVERTIR"),
+            ("PREFERENCIAS DEL OPERADOR", "RESTAURADAS" if app.cfg else "PRIMERA VEZ"),
+        ]
+        libre = espacio_libre(app.carpeta_para_espacio())
+        if libre:
+            reales.append(("ESPACIO LIBRE EN DISCO", en_gb(libre)))
+        sat = [g.sacar("ARRANQUE") for _ in range(5)]
+        cuerpo = []
+        for i, r in enumerate(reales):  # intercalar: real, decorado, real, decorado…
+            cuerpo.append((r, True))
+            if i < len(sat):
+                cuerpo.append((sat[i], False))
+        cuerpo += [(s, False) for s in sat[len(reales):]]
+        self.lineas = ([("DIRECCIÓN DE CONVERSIÓN DOCUMENTAL", "titulo"),
+                        (f"TERMINAL DE MESA DE ENTRADAS · REVISIÓN {VERSION} · SESIÓN {app.sesion}",
+                        "sub"), ("-" * 64, "sep")]
+                       + [((f"{k} ".ljust(32, ".") + f" {v}"), "real" if real else "deco")
+                          for (k, v), real in cuerpo]
+                       + [("-" * 64, "sep"), ("ESTADO DEL SISTEMA: OPERATIVO", "fin"),
+                          ("BIENVENIDO, OPERADOR. SU NÚMERO DE TURNO ES EL 001.", "fin")])
+        self.n, self.vivo = 0, True
+        self.c.after(80, self._paso)
+
+    def _paso(self):
+        if not self.vivo:
+            return
+        c, app = self.c, self.app
+        if self.n == 0:
+            barrido(c, max(c.winfo_width(), 2000), max(c.winfo_height(), 1400))
+        texto, tipo = self.lineas[self.n]
+        y = 44 + self.n * 21
+        fuente = (app.fam_titulo, 26) if tipo == "titulo" else (app.fam, 10)
+        color = {"titulo": ACENTO, "sub": GRIS, "sep": LINEA, "real": VERDE,
+                 "deco": GRIS, "fin": ACENTO}[tipo]
+        if tipo == "titulo":
+            texto_fosforo(c, 40, y, texto, fuente, color, anchor="w")
+        else:
+            c.create_text(40, y + 6, anchor="w", text=texto, font=fuente, fill=color)
+        self.n += 1
+        if self.n < len(self.lineas):
+            c.after(self.PASO_MS, self._paso)
+        else:
+            c.create_text(40, y + 30, anchor="w", fill=TENUE, font=(app.fam, 9),
+                          text="(Las líneas en verde claro son verificaciones reales; el resto, "
+                               "ambientación. Clic para seguir.)")
+            c.after(self.FINAL_MS, self.cerrar)
+
+    def cerrar(self):
+        if not self.vivo:
+            return
+        self.vivo = False
+        try:
+            self.app.unbind("<Key>", self._tecla)
+        except Exception:
+            pass
+        try:
+            self.c.destroy()
+        except tk.TclError:
+            pass
+        if self.app.arranque is self:
+            self.app.arranque = None
+
+
+class Teatro:
+    """Pantalla de trabajo de instalación secreta, a propósito exagerada: es sátira.
+    Regla: lo único que informa es el bloque «PROGRESO REAL» (y el tiempo final), que salen
+    de la barra, el registro y el reloj verdaderos. Todo lo demás es decorado. Un clic o
+    Esc lo ocultan."""
+
+    CARACTERES = GLIFOS
+    VERDES = ("#f0fff0", "#9dff80", "#39ff14", "#1f8f12", "#0e470b")  # de la cabeza a la cola
+    PASO_MS = 70           # cuadro de animación
     PAUSA_FRASE_MS = 1500  # cuánto queda cada frase ya escrita
-    FINAL_MS = 1800        # cuánto queda el cartel final
+    SUBPROCESO_MS = 850    # cada cuánto aparece un subproceso
+    FINAL_MS = 2200        # cuánto queda el cartel final
+    SEGMENTOS = 32
 
     def __init__(self, app, anfitrion):
         import random
         self.app, self.azar = app, random.Random()
+        self.guion = app.guion
+        self.inicio = time.time()
+        self.expediente = app.expediente or f"Nº {self.azar.randint(1000, 9999)}/{datetime.now().year}"
         self.c = tk.Canvas(anfitrion, background=BG, highlightthickness=0, cursor="hand2")
         self.c.place(x=0, y=0, relwidth=1, relheight=1)
         self.c.bind("<Button-1>", lambda e: self.cerrar())
         self.c.bind("<Configure>", lambda e: self._armar())
-        self.celdas, self.columnas = [], []
-        self.frases = []
+        self.celdas, self.columnas, self.subs = [], [], []
         self.frase, self.escritos, self.espera = "", 0, 0
+        self.n_proc = self.azar.randint(40, 900)
+        self.t_sub = 0
         self.final = None
         self.vivo = True
+        self._llenos = None
         self.fuente_lluvia = (app.fam_titulo, 17)
         self._armar()
         self._cuadro()
 
     # ---------------------------------------------------------------- dibujo
     def _armar(self):
-        c = self.c
+        c, app = self.c, self.app
         ancho, alto = max(c.winfo_width(), 40), max(c.winfo_height(), 40)
         if getattr(self, "_tam", None) == (ancho, alto):
             return
         self._tam = (ancho, alto)
         c.delete("all")
+        barrido(c, ancho, alto)
         self.cw, self.ch = 13, 17
         self.ncol, self.nfil = ancho // self.cw + 1, alto // self.ch + 1
         self.celdas = [[c.create_text(x * self.cw + 6, y * self.ch + 8, text="", fill=BG,
                                       font=self.fuente_lluvia)
                         for y in range(self.nfil)] for x in range(self.ncol)]
         self.columnas = [self._columna(nueva=True) for _ in range(self.ncol)]
-        # recuadro central
-        pw, ph = min(640, ancho - 40), 132
+        # recuadro central, con marco doble
+        pw, ph = min(700, ancho - 30), 214
         x0, y0 = (ancho - pw) / 2, max((alto - ph) / 2, 4)
-        c.create_rectangle(x0, y0, x0 + pw, y0 + ph, fill=BG, outline=ACENTO, width=2, tags="panel")
-        c.create_rectangle(x0 + 5, y0 + 5, x0 + pw - 5, y0 + ph - 5, outline=LINEA, tags="panel")
-        f = self.app.fam
-        self.t_frase = c.create_text(x0 + 22, y0 + 38, anchor="w", fill=VERDE, tags="panel",
-                                     font=(self.app.fam_titulo, 24), width=pw - 44)
-        self.t_real = c.create_text(x0 + 22, y0 + 82, anchor="w", fill=FG, tags="panel",
-                                    font=(f, 10), width=pw - 44)
-        self.t_nota = c.create_text(x0 + 22, y0 + 110, anchor="w", fill=TENUE, tags="panel",
-                                    font=(f, 9), width=pw - 44,
-                                    text="* Efectos 100 % decorativos. Ningún mainframe fue "
-                                         "vulnerado. Tocá para ocultar.")
+        self.x0, self.pw = x0, pw
+        c.create_rectangle(x0, y0, x0 + pw, y0 + ph, fill=BG, outline=ACENTO, tags="panel")
+        c.create_rectangle(x0 + 4, y0 + 4, x0 + pw - 4, y0 + ph - 4, outline=LINEA, tags="panel")
+        f, fx = app.fam, x0 + 20
+        c.create_text(fx, y0 + 20, anchor="w", fill=TENUE, font=(f, 9), tags="panel",
+                      text=f"EXPEDIENTE {self.expediente} · TRÁMITE EN CURSO · "
+                           f"AUTORIZACIÓN: DUDOSA")
+        self.t_frase = c.create_text(fx, y0 + 50, anchor="w", fill=ACENTO, tags="panel",
+                                     font=(app.fam_titulo, 24), width=pw - 40)
+        self.t_subs = [c.create_text(fx, y0 + 80 + i * 16, anchor="w", fill=GRIS, font=(f, 9),
+                                     tags="panel", text="") for i in range(3)]
+        c.create_line(fx, y0 + 134, x0 + pw - 20, y0 + 134, fill=LINEA, tags="panel")
+        c.create_text(fx, y0 + 150, anchor="w", fill=VERDE, font=(f, 10, "bold"), tags="panel",
+                      text="PROGRESO REAL")
+        bx, by = fx + 124, y0 + 144
+        paso = max((pw - 40 - 124 - 52) // self.SEGMENTOS, 4)
+        self.segs = [c.create_rectangle(bx + i * paso, by, bx + i * paso + paso - 2, by + 12,
+                                        width=0, fill=PANEL2, tags="panel")
+                     for i in range(self.SEGMENTOS)]
+        self.t_pct = c.create_text(x0 + pw - 20, y0 + 150, anchor="e", fill=VERDE,
+                                   font=(f, 10), tags="panel")
+        self.t_real = c.create_text(fx, y0 + 172, anchor="w", fill=VERDE, font=(f, 10),
+                                    tags="panel", width=pw - 40)
+        c.create_text(fx, y0 + 196, anchor="w", fill=TENUE, font=(f, 9), tags="panel",
+                      text="* Lo único verdadero de este recuadro es PROGRESO REAL. "
+                           "Clic para ocultar.")
+        self._llenos = None
         c.tag_raise("panel")
+        self._pintar_subs()
         if self.final:
             self._aplicar_final()
 
@@ -1359,6 +1780,11 @@ class Teatro:
             x, y = a.randrange(self.ncol), a.randrange(self.nfil)
             self.c.itemconfigure(self.celdas[x][y], text=a.choice(self.CARACTERES))
 
+    def _pintar_subs(self):
+        for i, item in enumerate(self.t_subs):
+            texto = self.subs[i] if i < len(self.subs) else ""
+            self.c.itemconfigure(item, text=texto, fill=GRIS if i == len(self.subs) - 1 else TENUE)
+
     def _texto(self):
         if self.final:
             return
@@ -1367,16 +1793,29 @@ class Teatro:
         elif self.espera > 0:
             self.espera -= self.PASO_MS
         else:
-            if not self.frases:
-                self.frases = list(self.FRASES[1:])
-                self.azar.shuffle(self.frases)
-                if not self.frase:
-                    self.frases.insert(0, self.FRASES[0])
-            self.frase, self.escritos = self.frases.pop(0), 0
-            self.espera = self.PAUSA_FRASE_MS
+            self.frase = self.guion.sacar("TITULOS")
+            self.escritos, self.espera = 0, self.PAUSA_FRASE_MS
         cursor = "_" if (self.escritos < len(self.frase) or self.espera // 400 % 2) else " "
         self.c.itemconfigure(self.t_frase, text=self.frase[:self.escritos] + cursor)
-        self.c.itemconfigure(self.t_real, text="PROGRESO REAL: " + self.progreso_real())
+        self.t_sub -= self.PASO_MS
+        if self.t_sub <= 0:
+            self.t_sub = self.SUBPROCESO_MS + self.azar.randint(-250, 400)
+            self.n_proc += self.azar.randint(1, 3)
+            self.subs = (self.subs + [f"[PROC {self.n_proc:04d}] {self.guion.sacar('SUBPROCESOS')}"])[-3:]
+            self._pintar_subs()
+        self._progreso()
+
+    def _progreso(self):
+        b = self.app.barra
+        maximo, valor = float(b.cget("maximum")), float(b.cget("value"))
+        llenos = round(self.SEGMENTOS * (valor / maximo)) if maximo > 1 else 0
+        if llenos != self._llenos:
+            self._llenos = llenos
+            for i, s in enumerate(self.segs):
+                self.c.itemconfigure(s, fill=ACENTO if i < llenos else PANEL2)
+            self.c.itemconfigure(self.t_pct, text=f"{valor / maximo:.0%}".replace("%", " %")
+                                 if maximo > 1 else "")
+        self.c.itemconfigure(self.t_real, text=self.progreso_real())
 
     def progreso_real(self):
         b = self.app.barra
@@ -1408,20 +1847,30 @@ class Teatro:
         self._proximo = self.c.after(max(self.PASO_MS, demora * 3), self._cuadro)
 
     # --------------------------------------------------------------- control
+    def segundos(self):
+        return time.time() - self.inicio
+
     def terminar(self, con_error=False):
-        """Cartel final, y se va solo."""
+        """Cartel final con el tiempo real, y se va solo."""
         if not self.vivo:
             return
-        self.final = (("COMPLETADO CON OBSERVACIONES", ROJO,
-                       "Algo falló de verdad: te abrí el registro.") if con_error else
-                      ("OPERACIÓN COMPLETADA", VERDE, "Ningún sistema fue hackeado en el proceso."))
+        seg = f"{self.segundos():.1f}".replace(".", ",")
+        if con_error:
+            self.final = ("RESULTADO: CON OBSERVACIONES", ROJO,
+                          [f"TIEMPO REAL DE EJECUCIÓN: {seg} S",
+                           "ALGO FALLÓ DE VERDAD: TE ABRÍ EL REGISTRO."])
+        else:
+            self.final = ("RESULTADO: EXITOSO", ACENTO,
+                          [f"TIEMPO REAL DE EJECUCIÓN: {seg} S", self.guion.sacar("CIERRES")])
         self._aplicar_final()
         self.c.after(self.FINAL_MS * (2 if con_error else 1), self.cerrar)
 
     def _aplicar_final(self):
-        titulo, color, sub = self.final
+        titulo, color, lineas = self.final
         self.c.itemconfigure(self.t_frase, text=titulo, fill=color)
-        self.c.itemconfigure(self.t_real, text=sub)
+        for item, texto, tono in zip(self.t_subs, lineas + [""], (VERDE, GRIS, GRIS)):
+            self.c.itemconfigure(item, text=texto, fill=tono)
+        self._progreso()
 
     def cerrar(self):
         self.vivo = False
@@ -1434,6 +1883,8 @@ class Teatro:
 
 
 class App(_BaseTk):
+    ARRANQUE = True  # secuencia de arranque (las pruebas la apagan)
+
     def __init__(self):
         registrar_fuentes()
         super().__init__()
@@ -1454,6 +1905,14 @@ class App(_BaseTk):
         self.ultima_fusion = None
         self.vigilante = None
         self.teatro = None
+        self.arranque = None
+        self._listo = False  # True cuando termina de armarse (para no narrar el arranque)
+        import random
+        self.azar = random.Random()
+        self.guion = Guion(self.azar)
+        self.efectos = modo_efectos(self.cfg)
+        self.sesion = f"{self.azar.randrange(16 ** 4):04X}-{self.azar.randrange(16 ** 4):04X}"
+        self.expediente = ""
         self.reglas = list(self.cfg.get("reglas", []))
         self.herr_pdfs = []
         self._win_herr = self._win_auto = None
@@ -1500,8 +1959,19 @@ class App(_BaseTk):
         self._actualizar_destino()
         self.protocol("WM_DELETE_WINDOW", self._salir)
         self.bind("<Control-a>", lambda e: self.marcar_todos() if self.focus_get() is self.tabla else None)
+        self.bind("<Control-o>", lambda e: self.elegir_archivos())
+        self.bind("<Control-Return>", lambda e: self.convertir())
+        self.bind("<Escape>", lambda e: self._ocultar_efectos())
+        for var in (self.v_salida_modo, self.v_salida_otra):
+            var.trace_add("write", lambda *a: self._narrar_destino())
         self.after(150, self._sondear)
         self._preparar_dnd()
+        self.after(1000, self._tic)
+        self._programar_reposo()
+        self._listo = True
+        self.decir_accion("listo")
+        if self.efectos == "completos" and self.ARRANQUE:
+            self.arranque = Arranque(self)
 
     # ------------------------------------------------------------------ estilo
     def _estilo(self):
@@ -1528,12 +1998,14 @@ class App(_BaseTk):
         st.configure("TLabel", foreground=FG)
         st.configure("Muted.TLabel", foreground=GRIS)
         st.configure("Faint.TLabel", foreground=TENUE)
-        st.configure("Title.TLabel", font=T(34), foreground=FG)
+        st.configure("Title.TLabel", font=T(34), foreground=ACENTO)
         st.configure("Cursor.TLabel", font=T(34), foreground=ACENTO)
-        st.configure("Section.TLabel", font=T(19), foreground=FG)
+        st.configure("Section.TLabel", font=T(19), foreground=VERDE)
         st.configure("Step.TLabel", font=T(19), foreground=ACENTO)
         st.configure("Big.TLabel", font=(texto, 11), foreground=GRIS, background=PANEL)
-        # botones: secundario (borde cian), principal (cian lleno), enlace (texto)
+        st.configure("Sis.TLabel", font=(texto, 10), foreground=GRIS)
+        st.configure("SisP.TLabel", font=(texto, 10, "bold"), foreground=ACENTO)
+        # botones: secundario (borde verde), principal (verde lleno), enlace (texto)
         st.configure("TButton", background=PANEL, foreground=ACENTO, bordercolor=LINEA,
                      lightcolor=PANEL, darkcolor=PANEL, borderwidth=1, relief="solid",
                      padding=(14, 5), focuscolor=PANEL, font=(texto, 10))
@@ -1550,7 +2022,7 @@ class App(_BaseTk):
                bordercolor=[("disabled", ACENTO_OSC), ("active", ACENTO2)],
                lightcolor=[("disabled", ACENTO_OSC), ("active", ACENTO2)],
                darkcolor=[("disabled", ACENTO_OSC), ("active", ACENTO2)],
-               foreground=[("disabled", "#3f7b84")])
+               foreground=[("disabled", "#2f7a25")])
         st.configure("Link.TButton", background=BG, foreground=ACENTO, bordercolor=BG,
                      lightcolor=BG, darkcolor=BG, padding=(2, 2), focuscolor=BG,
                      font=(texto, 10))
@@ -1568,7 +2040,7 @@ class App(_BaseTk):
         # lista
         st.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=TENUE,
                      rowheight=30, borderwidth=0, font=(texto, 10))
-        st.map("Treeview", background=[("selected", ACENTO_OSC)], foreground=[("selected", FG)])
+        st.map("Treeview", background=[("selected", ACENTO_OSC)], foreground=[("selected", VERDE)])
         st.configure("Treeview.Heading", background=BG, foreground=GRIS, relief="flat",
                      bordercolor=BG, lightcolor=BG, darkcolor=BG, font=T(17), padding=(8, 2))
         st.map("Treeview.Heading", background=[("active", BG)], foreground=[("active", GRIS)])
@@ -1609,6 +2081,15 @@ class App(_BaseTk):
         mas.add_separator()
         mas.add_command(label="  Enviar los PDF a PDFsam…", command=self.enviar_pdfsam)
         mas.add_command(label="  Ver / ocultar el registro", command=self._alternar_log)
+        mas.add_separator()
+        self.v_efectos = tk.StringVar(value=self.efectos)
+        sub = tk.Menu(mas, tearoff=0)
+        for valor, texto in (("completos", "Completos (animaciones y sátira)"),
+                             ("reducidos", "Reducidos (sin movimiento)"),
+                             ("apagados", "Apagados (modo serio)")):
+            sub.add_radiobutton(label="  " + texto + "  ", value=valor, variable=self.v_efectos,
+                                command=self._cambiar_efectos)
+        mas.add_cascade(label="  Efectos visuales", menu=sub)
         self.menu_mas = mas
 
     def _abrir_menu(self):
@@ -1619,17 +2100,17 @@ class App(_BaseTk):
 
     def _cursor(self, encendido=True):
         """Cursor de terminal junto al título: titila solo mientras se trabaja."""
-        if self.trabajando:
-            self.cursor.configure(background=ACENTO if encendido else BG)
+        if self.trabajando and self.efectos != "apagados":
+            self.enc.cursor(encendido)
             self.after(530, self._cursor, not encendido)
         else:
-            self.cursor.configure(background=ACENTO)
+            self.enc.cursor(True)
 
     # ------------------------------------------------------------ construcción
     def _paso(self, padre, numero, texto):
         """Encabezado numerado de cada paso (el que lo llama decide dónde ubicarlo)."""
         f = ttk.Frame(padre)
-        ttk.Label(f, text=f"{numero}", style="Step.TLabel").pack(side="left")
+        ttk.Label(f, text=f"{int(numero):02d} »", style="Step.TLabel").pack(side="left")
         ttk.Label(f, text=f" {texto}", style="Section.TLabel").pack(side="left")
         return f
 
@@ -1637,28 +2118,16 @@ class App(_BaseTk):
         cont = ttk.Frame(self, padding=(26, 14, 26, 16))
         cont.pack(fill="both", expand=True)
 
-        # --- encabezado
-        enc = ttk.Frame(cont)
+        # --- encabezado de terminal y consola del sistema
+        self.enc = enc = Encabezado(self, cont)
         enc.pack(fill="x")
-        ttk.Label(enc, text="PDF MASTER", style="Title.TLabel").pack(side="left")
-        self.cursor = tk.Frame(enc, background=ACENTO, width=13, height=24)
-        self.cursor.pack(side="left", padx=(6, 0), pady=(4, 0))
-        self.btn_mas = ttk.Button(enc, text="MÁS…", command=self._abrir_menu)
-        self.btn_mas.pack(side="right")
-        ttk.Label(enc, textvariable=self.v_lo, style="Faint.TLabel").pack(side="right", padx=14)
-        regla = tk.Canvas(cont, height=6, background=BG, highlightthickness=0)
-        regla.pack(fill="x", pady=(0, 2))
-
-        def dibujar(e=None):
-            regla.delete("all")
-            ancho = regla.winfo_width()
-            regla.create_line(0, 2, ancho, 2, fill=LINEA)
-            regla.create_line(0, 2, 120, 2, fill=ACENTO, width=3)
-            for x in range(ancho - 4, ancho - 60, -9):
-                regla.create_line(x, 0, x, 5, fill=LINEA)
-        regla.bind("<Configure>", dibujar)
-        ttk.Label(cont, text="Convertí Word y PowerPoint a PDF. Si querés, unilos en un solo archivo.",
-                  style="Muted.TLabel").pack(anchor="w", pady=(2, 4))
+        self.btn_mas = enc.boton
+        fc = ttk.Frame(cont)
+        fc.pack(fill="x", pady=(6, 0))
+        ttk.Label(fc, text="SIS>", style="SisP.TLabel").pack(side="left")
+        self.v_sis = tk.StringVar(value="")
+        ttk.Label(fc, textvariable=self.v_sis, style="Sis.TLabel").pack(side="left", padx=(6, 0))
+        self._sis_cola, self._sis_tarea = [], None
 
         # --- parte media en grid: la lista es lo único que se estira o se achica
         self.medio = medio = ttk.Frame(cont)
@@ -1669,11 +2138,12 @@ class App(_BaseTk):
         # --- 1. archivos
         fa = self._paso(medio, "1", "ELEGÍ LOS ARCHIVOS")
         G(fa, 0, pady=(8, 4))
-        ttk.Button(fa, text="Vaciar", style="Link.TButton", command=self.vaciar).pack(side="right")
-        ttk.Button(fa, text="Quitar", style="Link.TButton", command=self.quitar).pack(side="right", padx=8)
-        ttk.Button(fa, text="Carpeta completa…", style="Link.TButton",
-                   command=self.elegir).pack(side="right", padx=8)
-        ttk.Button(fa, text="+ AGREGAR ARCHIVOS", command=self.elegir_archivos).pack(side="right", padx=8)
+        ttk.Button(fa, text="[Vaciar]", style="Link.TButton", command=self.vaciar).pack(side="right")
+        ttk.Button(fa, text="[Quitar]", style="Link.TButton", command=self.quitar).pack(side="right", padx=6)
+        ttk.Button(fa, text="[Carpeta completa…]", style="Link.TButton",
+                   command=self.elegir).pack(side="right", padx=6)
+        self.btn_agregar = ttk.Button(fa, text="[ + AGREGAR ARCHIVOS ]", command=self.elegir_archivos)
+        self.btn_agregar.pack(side="right", padx=8)
 
         cuerpo = tk.Frame(medio, background=LINEA, padx=1, pady=1)
         cuerpo.grid(row=1, column=0, sticky="nsew", pady=(4, 2))
@@ -1697,10 +2167,10 @@ class App(_BaseTk):
 
         fb = ttk.Frame(medio)
         G(fb, 2)
-        for texto, cmd in (("Marcar todos", self.marcar_todos), ("Ninguno", self.desmarcar),
-                           ("Ordenar A-Z", self.ordenar), ("Subir", lambda: self.mover(-1)),
-                           ("Bajar", lambda: self.mover(1))):
-            ttk.Button(fb, text=texto, style="Link.TButton", command=cmd).pack(side="left", padx=(0, 10))
+        for texto, cmd in (("[Marcar todos]", self.marcar_todos), ("[Ninguno]", self.desmarcar),
+                           ("[Ordenar A-Z]", self.ordenar), ("[Subir]", lambda: self.mover(-1)),
+                           ("[Bajar]", lambda: self.mover(1))):
+            ttk.Button(fb, text=texto, style="Link.TButton", command=cmd).pack(side="left", padx=(0, 6))
         ttk.Label(fb, textvariable=self.v_estado, style="Muted.TLabel").pack(side="right")
 
         # --- 2. dónde se guardan
@@ -1713,7 +2183,7 @@ class App(_BaseTk):
                         variable=self.v_salida_modo).pack(side="left", padx=18)
         ttk.Radiobutton(fs, text="En otra carpeta", value="otra", variable=self.v_salida_modo,
                         command=self._radio_otra).pack(side="left")
-        ttk.Button(fs, text="Elegir…", style="Link.TButton", command=self.elegir_salida
+        ttk.Button(fs, text="[Elegir…]", style="Link.TButton", command=self.elegir_salida
                    ).pack(side="left", padx=4)
         G(ttk.Label(medio, textvariable=self.v_destino, style="Faint.TLabel", justify="left"),
           5, pady=(2, 0))
@@ -1747,14 +2217,14 @@ class App(_BaseTk):
         # --- 3. acción
         self.fr_accion = ttk.Frame(cont)
         self.fr_accion.pack(fill="x", pady=(12, 0), side="bottom")
-        ttk.Label(self.fr_accion, text="3", style="Step.TLabel").pack(side="left", padx=(0, 10))
-        self.btn_conv = ttk.Button(self.fr_accion, text="CONVERTIR A PDF", style="Accent.TButton",
+        ttk.Label(self.fr_accion, text="03 »", style="Step.TLabel").pack(side="left", padx=(0, 10))
+        self.btn_conv = ttk.Button(self.fr_accion, text="[ CONVERTIR A PDF ]", style="Accent.TButton",
                                    command=self.convertir)
         self.btn_conv.pack(side="left")
-        self.btn_abrir = ttk.Button(self.fr_accion, text="Abrir carpeta", style="Link.TButton",
+        self.btn_abrir = ttk.Button(self.fr_accion, text="[Abrir carpeta]", style="Link.TButton",
                                     command=self.abrir_carpeta)
         self.btn_abrir.pack(side="left", padx=(16, 0))
-        self.btn_fusion = ttk.Button(self.fr_accion, text="Abrir el PDF unido", style="Link.TButton",
+        self.btn_fusion = ttk.Button(self.fr_accion, text="[Abrir el PDF unido]", style="Link.TButton",
                                      command=self.abrir_fusion)
         ttk.Checkbutton(self.fr_accion, text="Abrir el resultado al terminar",
                         variable=self.v_abrir).pack(side="right")
@@ -1768,22 +2238,26 @@ class App(_BaseTk):
         self.log.tag_configure("ok", foreground=VERDE)
         self.log.tag_configure("error", foreground=ROJO)
         self.log.pack(fill="x")
-        ttk.Button(self.fr_log, text="Copiar registro", style="Link.TButton",
+        ttk.Button(self.fr_log, text="[Copiar registro]", style="Link.TButton",
                    command=self.copiar_registro).pack(anchor="e")
 
         self.fr_estado = ttk.Frame(cont)
         self.fr_estado.pack(fill="x", side="bottom", pady=(8, 0))
-        self.barra = ttk.Progressbar(self.fr_estado, mode="determinate")
+        self.barra = BarraSegmentada(self.fr_estado, fuente=(self.fam, 9))
         self.barra.pack(fill="x")
         fe = ttk.Frame(self.fr_estado)
         fe.pack(fill="x", pady=(4, 0))
         self.lbl_status = ttk.Label(fe, textvariable=self.v_status, style="Muted.TLabel")
         self.lbl_status.pack(side="left")
-        ttk.Button(fe, text="Ver registro", style="Link.TButton", command=self._alternar_log
+        ttk.Button(fe, text="[Ver registro]", style="Link.TButton", command=self._alternar_log
                    ).pack(side="right")
+        for b in (self.btn_agregar, self.btn_conv, self.btn_mas):
+            b.bind("<Enter>", lambda e, b=b: self._decodificar(b), add="+")
         # orden de empaquetado: estado (abajo del todo), luego acción; la parte media al final,
         # para que sea la que se achica si la ventana es baja
         self.fr_estado.pack_configure(before=enc)
+        self.vacio.configure(text="SIN EXPEDIENTES EN LA MESA.\n\nArrastrá archivos acá o tocá "
+                                  "[ + AGREGAR ARCHIVOS ]")
         self.fr_accion.pack_configure(after=self.fr_estado)
         medio.pack(fill="both", expand=True)
 
@@ -1820,9 +2294,9 @@ class App(_BaseTk):
                   ).pack(anchor="w", pady=(0, 8))
         f1 = ttk.Frame(t)
         f1.pack(fill="x", **pad)
-        ttk.Button(f1, text="+ AGREGAR PDF", command=self.herr_agregar).pack(side="left")
-        ttk.Button(f1, text="Vaciar", style="Link.TButton", command=self.herr_vaciar).pack(side="right")
-        ttk.Button(f1, text="Quitar", style="Link.TButton", command=self.herr_quitar).pack(side="right", padx=6)
+        ttk.Button(f1, text="[ + AGREGAR PDF ]", command=self.herr_agregar).pack(side="left")
+        ttk.Button(f1, text="[Vaciar]", style="Link.TButton", command=self.herr_vaciar).pack(side="right")
+        ttk.Button(f1, text="[Quitar]", style="Link.TButton", command=self.herr_quitar).pack(side="right", padx=6)
         cuerpo = tk.Frame(t, background=LINEA, padx=1, pady=1)
         cuerpo.pack(fill="both", expand=True, **pad)
         sb = ttk.Scrollbar(cuerpo)
@@ -1850,7 +2324,7 @@ class App(_BaseTk):
                 ttk.Label(f, text=ayuda, style="Muted.TLabel").pack(anchor="w")
             return f
         f = bloque("Eliminar páginas", "Se abren las miniaturas del PDF elegido y marcás las que sobran.")
-        ttk.Button(f, text="Abrir miniaturas…", command=self.herr_borrar).pack(anchor="w", pady=4)
+        ttk.Button(f, text="[ ABRIR MINIATURAS… ]", command=self.herr_borrar).pack(anchor="w", pady=4)
 
         f = bloque("Dividir", None)
         r1 = ttk.Frame(f)
@@ -1863,7 +2337,7 @@ class App(_BaseTk):
         ttk.Radiobutton(r2, text="Por intervalos:", value="rangos", variable=self.v_modo_div).pack(side="left")
         ttk.Entry(r2, textvariable=self.v_rangos_div, width=24).pack(side="left", padx=4)
         ttk.Label(r2, text="partes separadas por ;  (ej.: 1-3;4-7;8-)", style="Muted.TLabel").pack(side="left")
-        ttk.Button(f, text="Dividir", command=self.herr_dividir).pack(anchor="w", pady=4)
+        ttk.Button(f, text="[ DIVIDIR ]", command=self.herr_dividir).pack(anchor="w", pady=4)
 
         f = bloque("Comprimir", None)
         r3 = ttk.Frame(f)
@@ -1873,7 +2347,7 @@ class App(_BaseTk):
                      values=["baja", "media", "alta"]).pack(side="left", padx=6)
         ttk.Label(r3, style="Muted.TLabel",
                   text="baja: solo estructura · media: imágenes a 150 dpi · alta: 96 dpi").pack(side="left")
-        ttk.Button(f, text="Comprimir", command=self.herr_comprimir).pack(anchor="w", pady=4)
+        ttk.Button(f, text="[ COMPRIMIR ]", command=self.herr_comprimir).pack(anchor="w", pady=4)
         ttk.Label(t, style="Muted.TLabel", text="Los resultados se guardan junto al PDF original, con un nombre nuevo."
                   ).pack(anchor="w", pady=(8, 0))
 
@@ -1886,7 +2360,7 @@ class App(_BaseTk):
                   ).pack(anchor="w", pady=(0, 8))
         r1 = ttk.Frame(t)
         r1.pack(fill="x", pady=2)
-        ttk.Button(r1, text="Elegir carpeta…", command=self.auto_elegir).pack(side="left")
+        ttk.Button(r1, text="[ ELEGIR CARPETA… ]", command=self.auto_elegir).pack(side="left")
         self.v_acc_carpeta_txt = tk.StringVar()
         self.v_acc_carpeta.trace_add("write", lambda *a: self.v_acc_carpeta_txt.set(
             self._corta(self.v_acc_carpeta.get(), 70)))
@@ -1905,7 +2379,7 @@ class App(_BaseTk):
         r3.pack(fill="x")
         ttk.Checkbutton(r3, text="También convertir Word/PowerPoint que lleguen",
                         variable=self.v_acc_conv).pack(side="left")
-        ttk.Button(r3, text="Agregar regla", command=self.auto_agregar).pack(side="right")
+        ttk.Button(r3, text="[ AGREGAR REGLA ]", command=self.auto_agregar).pack(side="right")
         cuerpo = tk.Frame(t, background=LINEA, padx=1, pady=1)
         cuerpo.pack(fill="both", expand=True, pady=8)
         self.lista_reglas = tk.Listbox(cuerpo, height=6, activestyle="none", exportselection=False,
@@ -1915,8 +2389,8 @@ class App(_BaseTk):
         self.lista_reglas.pack(fill="both", expand=True)
         r4 = ttk.Frame(t)
         r4.pack(fill="x")
-        ttk.Button(r4, text="Quitar regla", command=self.auto_quitar).pack(side="left")
-        self.btn_vig = ttk.Button(r4, text="Detener vigilancia" if self.vigilante else "Iniciar vigilancia",
+        ttk.Button(r4, text="[Quitar regla]", command=self.auto_quitar).pack(side="left")
+        self.btn_vig = ttk.Button(r4, text="[ DETENER VIGILANCIA ]" if self.vigilante else "[ INICIAR VIGILANCIA ]",
                                   command=self.auto_alternar)
         self.btn_vig.pack(side="left", padx=8)
         ttk.Label(r4, textvariable=self.v_vig, style="Muted.TLabel").pack(side="left")
@@ -1929,6 +2403,8 @@ class App(_BaseTk):
             self._crecer()
         else:
             self.fr_fusion.grid_remove()
+        if self._listo:
+            self.decir_accion("unir_si" if self.v_fusionar.get() else "unir_no")
         self._actualizar_destino()
 
     def _alternar_log(self):
@@ -2033,6 +2509,7 @@ class App(_BaseTk):
             messagebox.showinfo("Sin archivos válidos",
                                 "No hay ningún Word, PowerPoint ni PDF en lo que elegiste.")
             return
+        antes = 0 if (reemplazar or not self.archivos) else len(self.archivos)
         if reemplazar or not self.archivos:
             self.archivos, self.rangos = list(nuevos), {}
             self.base = nuevos[0].parent
@@ -2041,6 +2518,7 @@ class App(_BaseTk):
             self.archivos += [n for n in nuevos if n not in existentes]
         self.modo = "archivos"
         self._llenar_lista()
+        self.decir_accion("agregar", n=len(self.archivos) - antes)
 
     def _fijar_carpeta(self, ruta: Path):
         self.modo = "carpeta"
@@ -2048,6 +2526,7 @@ class App(_BaseTk):
         self.rangos = {}
         self.archivos = listar(ruta, self.v_recursivo.get())
         self._llenar_lista()
+        self.decir_accion("carpeta", n=len(self.archivos), nombre=ruta.name or str(ruta))
 
     def _fila(self, a: Path):
         try:
@@ -2095,6 +2574,7 @@ class App(_BaseTk):
         marcados = set(self._marcados())
         self.archivos = sorted(self.archivos, key=_clave_natural)
         self._llenar_lista([i for i, a in enumerate(self.archivos) if a in marcados])
+        self.decir_accion("ordenar", n=len(self.archivos))
 
     def mover(self, delta):
         idx = self._marcados_idx()
@@ -2115,16 +2595,21 @@ class App(_BaseTk):
             nuevos = [i + 1 for i in idx]
         self._llenar_lista(nuevos)
         self.tabla.see(str(nuevos[0]))
+        self.decir_accion("mover")
 
     def quitar(self):
         quitar = set(self._marcados_idx())
         if quitar:
             self.archivos = [a for i, a in enumerate(self.archivos) if i not in quitar]
             self._llenar_lista([])
+            self.decir_accion("quitar", n=len(quitar))
 
     def vaciar(self):
+        hubo = bool(self.archivos)
         self.archivos, self.rangos = [], {}
         self._llenar_lista([])
+        if hubo:
+            self.decir_accion("vaciar")
 
     def _contar(self):
         n = len(self.archivos)
@@ -2229,7 +2714,13 @@ class App(_BaseTk):
         self._cursor()
         if self.teatro:
             self.teatro.cerrar()
-        if self.cfg.get("efectos", True):  # se apagan con "efectos": false en la config
+        if self.arranque:
+            self.arranque.cerrar()
+        self.inicio_trabajo = time.time()
+        self.expediente = f"Nº {self.azar.randint(1000, 9999)}/{datetime.now().year}"
+        self.decir_accion("inicio", exp=self.expediente,
+                          n=next((len(x) for x in args if isinstance(x, (list, tuple))), 1))
+        if self.efectos == "completos":  # menú MÁS… » Efectos visuales
             self.teatro = Teatro(self, self.medio)
         self.barra.config(maximum=1, value=0)
         emit = lambda t, d: self.cola.put((t, d))
@@ -2289,6 +2780,9 @@ class App(_BaseTk):
                         self._alternar_log()
                     if self.teatro:
                         self.teatro.terminar(self.hubo_error)
+                    seg = f"{time.time() - getattr(self, 'inicio_trabajo', time.time()):.1f}"
+                    self.decir_accion("fin_error" if self.hubo_error else "fin",
+                                      exp=self.expediente, seg=seg.replace(".", ","))
                     self._estado_lo()
                     self._pedir_paginas()
         except queue.Empty:
@@ -2351,6 +2845,108 @@ class App(_BaseTk):
 
     # ----------------------------------------------------------- herramientas PDF
 
+    # ------------------------------------------------------- consola del sistema
+    def decir(self, texto, satirico=True):
+        """Escribe en la línea SIS>. Lo satírico no sale en modo apagado."""
+        if not texto or (satirico and self.efectos == "apagados"):
+            return
+        if self.efectos != "completos":
+            self.v_sis.set(texto)
+            return
+        self._sis_cola = [texto]  # lo nuevo pisa a lo que esperaba
+        if not self._sis_tarea:
+            self._sis_tipear()
+
+    def _sis_tipear(self, texto=None, i=0):
+        if texto is None:
+            if not self._sis_cola:
+                self._sis_tarea = None
+                return
+            texto, i = self._sis_cola.pop(0), 0
+        if self._sis_cola:  # llegó otro: se termina de golpe y se sigue con el nuevo
+            self.v_sis.set(texto)
+            return self._sis_tipear()
+        i = min(i + 2, len(texto))
+        self.v_sis.set(texto[:i] + ("_" if i < len(texto) else ""))
+        if i < len(texto):
+            self._sis_tarea = self.after(16, self._sis_tipear, texto, i)
+        else:
+            self._sis_tarea = None
+
+    def decir_accion(self, clave, **datos):
+        datos.setdefault("n", 0)
+        datos.setdefault("nombre", "")
+        datos.setdefault("exp", self.expediente)
+        datos.setdefault("seg", "")
+        llano, sat = self.guion.accion(clave, **datos)
+        if self.efectos == "apagados":
+            self.decir(llano, satirico=False)
+        else:
+            self.decir(sat)
+
+    def _narrar_destino(self):
+        if not self._listo:
+            return
+        s = self.salida()
+        nombre = (f"en {self._corta(s, 50)}" if isinstance(s, Path) else
+                  "en la subcarpeta «PDF»" if s else "junto a cada original")
+        if self.v_salida_modo.get() == "otra" and not isinstance(s, Path):
+            return
+        self.decir_accion("destino", nombre=nombre)
+
+    def carpeta_para_espacio(self):
+        s = self.salida() if hasattr(self, "v_salida_modo") else None
+        return s if isinstance(s, Path) else (self.base or Path.home())
+
+    def _tic(self):
+        """Reloj y datos reales del encabezado, una vez por segundo."""
+        try:
+            self.enc.actualizar()
+        except tk.TclError:
+            return
+        self.after(1000, self._tic)
+
+    def _programar_reposo(self):
+        self.after(self.azar.randint(45, 110) * 1000, self._reposo)
+
+    def _reposo(self):
+        """De vez en cuando, con el programa quieto, el sistema comenta algo."""
+        if not self.trabajando and self.efectos != "apagados":
+            self.decir(self.guion.sacar("REPOSO"))
+            if self.efectos == "completos" and self.azar.random() < 0.3:
+                self.enc.interferencia()
+        self._programar_reposo()
+
+    def _decodificar(self, boton, paso=0, original=None):
+        """Al pasar el mouse, el texto del botón se «decodifica» (solo en efectos completos)."""
+        if original is None:
+            if self.efectos != "completos" or getattr(boton, "_decodificando", False):
+                return
+            boton._decodificando, original = True, boton.cget("text")
+        if paso >= 7:
+            boton.configure(text=original)
+            boton._decodificando = False
+            return
+        visibles = len(original) * paso // 7
+        ruido = "".join(c if c in " []" else self.azar.choice(GLIFOS) for c in original[visibles:])
+        boton.configure(text=original[:visibles] + ruido)
+        self.after(26, self._decodificar, boton, paso + 1, original)
+
+    def _cambiar_efectos(self):
+        self.efectos = self.v_efectos.get()
+        self.cfg["efectos"] = self.efectos
+        guardar_config(self.cfg)
+        if self.efectos != "completos":
+            self._ocultar_efectos()
+        self.decir({"completos": "EFECTOS COMPLETOS RESTABLECIDOS. EL SISTEMA RECUPERA SU DIGNIDAD.",
+                    "reducidos": "EFECTOS REDUCIDOS. EL SISTEMA SEGUIRÁ OPINANDO, PERO QUIETO."}
+                   .get(self.efectos, "Efectos apagados."), satirico=self.efectos != "apagados")
+
+    def _ocultar_efectos(self):
+        for overlay in (self.teatro, self.arranque):
+            if overlay:
+                overlay.cerrar()
+
     def _estado_lo(self):
         self.v_lo.set("LibreOffice: listo" if buscar_soffice()
                       else "LibreOffice: no instalado (se instala al convertir)")
@@ -2385,7 +2981,8 @@ class App(_BaseTk):
     def _preparar_dnd(self):
         if not HAY_DND:
             self.v_dnd.set("")
-            self.vacio.config(text="Tocá “Agregar archivos” para empezar")
+            self.vacio.config(text="SIN EXPEDIENTES EN LA MESA.\n\nTocá [ + AGREGAR ARCHIVOS ] "
+                                   "para empezar")
             if self.cfg.get("dnd_intentos", 0) < 2:
                 self.cfg["dnd_intentos"] = self.cfg.get("dnd_intentos", 0) + 1
                 guardar_config(self.cfg)
@@ -2559,7 +3156,7 @@ class App(_BaseTk):
         if self.vigilante:
             self.vigilante.parar.set()
             self.vigilante = None
-            self._btn_vig("Iniciar vigilancia")
+            self._btn_vig("[ INICIAR VIGILANCIA ]")
             self.v_vig.set("Vigilancia detenida")
             return
         if not self.reglas:
@@ -2571,7 +3168,7 @@ class App(_BaseTk):
                 lambda t, d: self.cola.put((t, d))), daemon=True).start()
         self.vigilante = Vigilante(self.reglas, lambda t, d: self.cola.put((t, d)))
         self.vigilante.start()
-        self._btn_vig("Detener vigilancia")
+        self._btn_vig("[ DETENER VIGILANCIA ]")
         self.v_vig.set(f"Vigilando {len(self.reglas)} carpeta(s)…")
         self._log(f"Vigilancia iniciada en {len(self.reglas)} carpeta(s).")
 
