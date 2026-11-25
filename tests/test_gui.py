@@ -287,9 +287,22 @@ def test_capa_crt_en_windows(app, pm):
     app.update()
     t = app.crt.t
     assert (t.winfo_width(), t.winfo_height()) == (app.winfo_width(), app.winfo_height())
-    hwnd = ctypes.windll.user32.GetParent(t.winfo_id()) or t.winfo_id()
+    hwnd = app.crt.hwnd()
     estilo = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
-    assert estilo & 0x20 and estilo & 0x80000  # no recibe clics y es una capa
+    assert estilo & 0x20 and estilo & 0x80000, hex(estilo)  # no recibe clics y es una capa
+    # comportamiento real: la ventana que Windows ve bajo el mouse no puede ser la capa
+    from ctypes import wintypes
+    centro = wintypes.POINT(app.winfo_rootx() + app.winfo_width() // 2,
+                            app.winfo_rooty() + app.winfo_height() // 2)
+    ctypes.windll.user32.WindowFromPoint.argtypes = [wintypes.POINT]
+    ctypes.windll.user32.WindowFromPoint.restype = wintypes.HWND
+    debajo = ctypes.windll.user32.WindowFromPoint(centro)
+    raiz = ctypes.windll.user32.GetAncestor(debajo, 2)  # GA_ROOT
+    assert raiz != hwnd, "la capa CRT se está comiendo los clics"
+    # minimizar y volver a mostrar no le saca la transparencia a los clics
+    app.withdraw(); app.update(); app.deiconify(); app.update()
+    estilo = ctypes.windll.user32.GetWindowLongW(app.crt.hwnd(), -20)
+    assert estilo & 0x20, hex(estilo)
     app.crt.destello()
     app.crt.parpadeo()
     app.v_efectos.set("apagados")

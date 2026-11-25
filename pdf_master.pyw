@@ -1799,24 +1799,31 @@ class PantallaCRT:
         t.transient(app)
         self.c = tk.Canvas(t, background=self.CLAVE, highlightthickness=0)
         self.c.pack(fill="both", expand=True)
-        t.update_idletasks()
-        self._atravesable()
         self._tam = None
         app.bind("<Configure>", self._seguir, add="+")
         app.bind("<Unmap>", lambda e: self.t.withdraw() if e.widget is app else None, add="+")
         app.bind("<Map>", lambda e: self._mostrar() if e.widget is app else None, add="+")
         self._mostrar()
 
-    def _atravesable(self):
+    ESTILO = 0x80000 | 0x20 | 0x80 | 0x08000000  # en capas, transparente al mouse, sin barra, sin foco
+
+    def hwnd(self):
         import ctypes
-        u = ctypes.windll.user32
-        hwnd = u.GetParent(self.t.winfo_id()) or self.t.winfo_id()
-        estilo = u.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
-        # en capas + transparente al mouse + sin barra de tareas + nunca toma el foco
-        u.SetWindowLongW(hwnd, -20, estilo | 0x80000 | 0x20 | 0x80 | 0x08000000)
+        return ctypes.windll.user32.GetParent(self.t.winfo_id()) or self.t.winfo_id()
+
+    def _atravesable(self):
+        """Que los clics la atraviesen. Tk recrea la ventana de Windows al mostrarla y el
+        estilo se pierde: por eso se vuelve a poner cada vez que se muestra o se mueve."""
+        import ctypes
+        u, h = ctypes.windll.user32, self.hwnd()
+        estilo = u.GetWindowLongW(h, -20)  # GWL_EXSTYLE
+        if estilo & self.ESTILO != self.ESTILO:
+            u.SetWindowLongW(h, -20, estilo | self.ESTILO)
 
     def _mostrar(self):
         self.t.deiconify()
+        self.t.update_idletasks()
+        self._atravesable()
         self._seguir()
 
     def _seguir(self, e=None):
@@ -1827,6 +1834,7 @@ class PantallaCRT:
         if w < 10:
             return
         self.t.geometry(f"{w}x{h}+{a.winfo_rootx()}+{a.winfo_rooty()}")
+        self._atravesable()
         if (w, h) != self._tam:
             self._tam = (w, h)
             self._dibujar(w, h)
