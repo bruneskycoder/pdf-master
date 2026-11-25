@@ -76,7 +76,19 @@ def principal():
     app.guion.mazos["ATAQUES"] = [("SE DETECTÓ UN HACKER EN LA RED. PIDE QUE LE CONVIERTAN UN "
                                    "TRABAJO PRÁCTICO.", "SE LE ASIGNÓ TURNO PARA MARZO.")]
     app.ataque()
-    app.after(420, lambda: (foto(app, "ataque"), app.after(2600, trabajar)))
+    app.after(420, lambda: (foto(app, "ataque"), app.after(2600, hackear)))
+
+
+def hackear():
+    import types
+    app.antes_de_convertir(sorted(demo.iterdir()), lambda: None)
+    for i in range(330):
+        app.hackeo._tecla(types.SimpleNamespace(keysym="a", char="a"))
+    app.hackeo.pendiente = "KERNEL PANIC: el núcleo entró en pánico. Se lo calmó con un vaso de agua."
+    for i in range(14):
+        app.hackeo._tecla(types.SimpleNamespace(keysym="a", char="a"))
+    app.hackeo._denegado()
+    app.after(300, lambda: (foto(app, "hackeo"), app.hackeo.cerrar(), app.after(900, trabajar)))
 
 
 def trabajar():

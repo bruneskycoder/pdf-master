@@ -21,8 +21,10 @@ PDF Master se ve como una terminal de fósforo verde de 1987, de una dependencia
 - **Al abrirlo** hace una secuencia de arranque y te pide un PIN de operador. Abajo, en rojo, te dice cuál es: «LO SABEMOS PORQUE EL SISTEMA ESTÁ HACKEADO DESDE 1994». Cualquier respuesta entra.
 - **La línea `SIS>`** comenta cada cosa que hacés («MESA DE ENTRADAS: 3 EXPEDIENTES RECIBIDOS. SE LABRÓ ACTA.»).
 - **Cada tanto, un ataque falso:** la pantalla destella en rojo, el encabezado se corrompe y aparece una alarma («UN VIRUS INTENTA CONVERTIR SUS PDF EN WORD»). Dos segundos después se resuelve sola («BLOQUEADO. ACÁ SE CONVIERTE EN UN SOLO SENTIDO.»).
+- **Antes de convertir, el «MODO INTRUSIÓN»:** un simulador de hacker. Apretás cualquier tecla y la pantalla escribe código sofisticado (C, Python, assembler y SQL de la burocracia, con los nombres reales de tus archivos adentro), con «ACCESO DENEGADO», *kernel panics* y la pantalla fallando. **Enter** arranca la conversión de verdad, **Esc** vuelve, y `[ CONVERTIR SIN HACKEAR ]` es para quien no quiera jugar. El «nivel de hackeo» es decorado; el progreso real empieza recién al convertir.
 - **Mientras convierte,** la pantalla se llena de lluvia de caracteres y subprocesos solemnes que no hacen nada («[PROC 0720] FINGIENDO QUE TODO ESTO ES NECESARIO»), con alguna falla roja que se recupera en el acto.
-- **En Windows,** una capa de vidrio de monitor viejo cubre toda la ventana: líneas de barrido, esquinas oscuras que insinúan la curvatura y un parpadeo ocasional. No recibe clics: se trabaja igual que sin ella.
+- **La pantalla está al borde de la falla:** desgarros horizontales, pérdida de sincronía vertical y apagones de una fracción de segundo, cada uno con su comentario («SE GOLPEÓ EL MONITOR. SEÑAL RECUPERADA.»). Nunca más de tres destellos por segundo, por las personas fotosensibles.
+- **En Windows,** un vidrio de monitor viejo cubre toda la ventana: líneas de barrido, un reflejo diagonal, la barra clara que baja lenta, y un marco con las esquinas curvas casi negras. Son dos capas que no reciben clics: se trabaja igual que sin ellas.
 
 Es sátira, y está hecha para no confundir:
 
@@ -32,11 +34,11 @@ Es sátira, y está hecha para no confundir:
 - **El PIN no es una clave:** no se guarda ni se envía. No escribas ahí ninguna contraseña tuya.
 - **Siempre arranca con todo encendido,** y se puede bajar el volumen en `MÁS… » Efectos visuales`: *Completos*, *Reducidos* (sin movimiento, la sátira queda quieta) o *Apagados* (modo serio: sin sátira, sin animación y sin capa de vidrio). La elección queda guardada. `Esc` saltea el arranque y oculta la animación del momento.
 
-Atajos: `Ctrl+O` agrega archivos, `Ctrl+Enter` convierte, `Esc` oculta los efectos.
+Atajos: `Ctrl+O` agrega archivos, `Ctrl+Enter` convierte (pasa por el modo intrusión), `Esc` oculta los efectos o sale del modo intrusión sin convertir.
 
-| PIN de operador | Ataque falso | Mientras convierte |
+| PIN de operador | Modo intrusión | Mientras convierte |
 |---|---|---|
-| ![PIN de operador](docs/capturas/pin_respuesta.png) | ![Ataque falso](docs/capturas/ataque.png) | ![Pantalla de trabajo](docs/capturas/trabajando.png) |
+| ![PIN de operador](docs/capturas/pin_respuesta.png) | ![Simulador de hacker](docs/capturas/hackeo.png) | ![Pantalla de trabajo](docs/capturas/trabajando.png) |
 
 ## Cómo usarlo
 
