@@ -13,6 +13,9 @@ def app(pm, tmp_path, monkeypatch):
     monkeypatch.setattr(pm, "CONFIG", tmp_path / "config.json")
     monkeypatch.setattr(pm, "HAY_DND", False)
     monkeypatch.setattr(pm.App, "_preparar_dnd", lambda self: None)
+    monkeypatch.setattr(pm.App, "ARRANQUE", False)
+    monkeypatch.setattr(pm, "modo_efectos", lambda cfg: cfg.get("efectos", "completos")
+                        if cfg.get("efectos") is not False else "apagados")
     try:
         a = pm.App()
     except tk.TclError as e:
@@ -91,7 +94,7 @@ def test_con_error_abre_el_registro(app, pm, monkeypatch):
     monkeypatch.setattr(pm.Teatro, "FINAL_MS", 200)
     app._iniciar(lambda emit: (emit("log", "ERROR  x.docx: dañado"), emit("fin", "Listo.")), ())
     assert _esperar(app, lambda: app.log_visible)
-    assert app.teatro is None or app.teatro.final[0] == "COMPLETADO CON OBSERVACIONES"
+    assert app.teatro is None or app.teatro.final[0] == "RESULTADO: CON OBSERVACIONES"
 
 
 def test_un_clic_oculta_los_efectos(app):
@@ -103,7 +106,8 @@ def test_un_clic_oculta_los_efectos(app):
 
 
 def test_efectos_se_pueden_apagar(app):
-    app.cfg["efectos"] = False
+    app.v_efectos.set("apagados")
+    app._cambiar_efectos()
     app._iniciar(lambda emit: emit("fin", "Listo."), ())
     assert app.teatro is None
 
@@ -129,3 +133,85 @@ def test_la_animacion_es_un_solo_bucle(app):
     assert len(app.tk.call("after", "info")) == pendientes_antes
     app.update()
     assert app.teatro.vivo
+
+
+# ------------------------------------------------------------- estética 5.1
+def test_modo_efectos(pm, monkeypatch):
+    assert pm.modo_efectos({"efectos": False}) == "apagados"  # configuración de la 5.0
+    assert pm.modo_efectos({"efectos": True}) == "completos"
+    assert pm.modo_efectos({"efectos": "reducidos"}) == "reducidos"
+    monkeypatch.setattr(pm, "animaciones_del_sistema", lambda: False)
+    assert pm.modo_efectos({}) == "reducidos"  # respeta «Mostrar animaciones» de Windows
+
+
+def test_guion_usa_los_datos_reales(pm):
+    import random
+    g = pm.Guion(random.Random(1))
+    for clave, (llano, variantes) in pm.Guion.ACCIONES.items():
+        datos = {"n": 37, "nombre": "Física II", "exp": "Nº 1234/2026", "seg": "4,2"}
+        for v in variantes:
+            texto = v.format(cierre="", **datos)
+            for campo, valor in datos.items():
+                if "{" + campo + "}" in v:
+                    assert str(valor) in texto, (clave, v)
+        assert g.accion(clave, **datos)[1]
+    assert set("".join(pm.GLIFOS)) <= set(map(chr, range(32, 256)))
+
+
+def test_modo_serio_no_muestra_satira(app, tmp_path):
+    app.v_efectos.set("apagados")
+    app._cambiar_efectos()
+    for n in ("a.docx", "b.pdf"):
+        (tmp_path / n).write_bytes(b"x")
+    app.agregar_rutas([str(tmp_path / "a.docx"), str(tmp_path / "b.pdf")])
+    assert app.v_sis.get() == "2 archivo(s) en la lista."
+    app._reposo()
+    assert app.v_sis.get() == "2 archivo(s) en la lista."
+
+
+def test_cada_accion_deja_constancia(app, tmp_path):
+    app.v_efectos.set("reducidos")  # sin animación de tipeo, para leerlo enseguida
+    app._cambiar_efectos()
+    (tmp_path / "x.docx").write_bytes(b"x")
+    import re
+    for _ in range(12):  # todas las variantes, que salen al azar, llevan el número real
+        app.agregar_rutas([str(tmp_path / "x.docx")], reemplazar=True)
+        assert re.search(r"\b1 (EXPEDIENTE|DOCUMENTO)", app.v_sis.get()), app.v_sis.get()
+    app.quitar()
+    assert "SE DESAFECTARON 1" in app.v_sis.get()
+
+
+def test_arranque_se_saltea_con_un_clic(app, pm):
+    app.arranque = pm.Arranque(app)
+    app.update()
+    textos = [l for l, _ in app.arranque.lineas]
+    assert any(t.startswith("FUENTES DE FÓSFORO") for t in textos)
+    assert any(t.startswith("LIBREOFFICE") for t in textos)
+    app.arranque.c.event_generate("<Button-1>", x=5, y=5, when="now")
+    app.update()
+    assert app.arranque is None
+
+
+def test_barra_segmentada_se_usa_como_progressbar(app):
+    app.barra.config(maximum=4, value=1)
+    assert (app.barra.cget("maximum"), app.barra.cget("value")) == (4, 1)
+    assert app.barra.fraccion() == 0.25
+    app.update()
+
+
+def test_botones_se_decodifican_y_vuelven(app):
+    original = app.btn_conv.cget("text")
+    app._decodificar(app.btn_conv)
+    assert _esperar(app, lambda: not getattr(app.btn_conv, "_decodificando", False), 2)
+    assert app.btn_conv.cget("text") == original
+
+
+def test_mensaje_oculto_y_reposo(app):
+    for _ in range(5):
+        app.enc._clic_titulo(None)
+    assert _esperar(app, lambda: "CURIOSIDAD NO AUTORIZADA" in app.v_sis.get() and
+                    not app.v_sis.get().endswith("_"), 3)
+    app._reposo()
+    app.enc.interferencia()
+    _esperar(app, lambda: False, 0.5)
+    assert app.enc.winfo_exists()

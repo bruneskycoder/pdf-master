@@ -2,6 +2,24 @@
 
 Formato: versión, qué cambia para quien lo usa y, aparte, lo técnico.
 
+## 5.1 — 2026-11-25
+
+**Para quien lo usa**
+
+- Terminal de **fósforo verde** sobre negro, con líneas de barrido, halo en los títulos y marco doble en el encabezado. Ámbar solo para advertencias, rojo para errores.
+- Personalidad de burocracia informática: secuencia de arranque, línea `SIS>` que comenta cada acción con los números reales, comentarios ocasionales cuando el programa está quieto, microinterferencias raras y un mensaje oculto.
+- Botones entre corchetes, que se «decodifican» al pasar el mouse. Barra de progreso de bloques.
+- La pantalla de trabajo muestra expediente, subprocesos absurdos, el bloque **PROGRESO REAL** con su propia barra y, al final, el tiempo real de ejecución.
+- Encabezado con datos reales: reloj, espacio libre en el disco de destino y estado de LibreOffice.
+- Menú `MÁS… » Efectos visuales`: completos, reducidos o apagados (modo serio). Respeta «Mostrar animaciones» de Windows.
+- Atajos: `Ctrl+O` agregar, `Ctrl+Enter` convertir, `Esc` ocultar efectos.
+
+**Técnico**
+
+- Clases nuevas: `Guion` (textos sin repetir hasta agotar), `BarraSegmentada` (misma interfaz que `ttk.Progressbar`), `Encabezado`, `Arranque`. `Teatro` rediseñado.
+- 61 pruebas: suman modos de efectos, que el guion use los datos reales, modo serio sin sátira, arranque, barra, decodificación de botones y mensaje oculto.
+- La preferencia vieja `"efectos": false` sigue valiendo (equivale a *Apagados*).
+
 ## 5.0 — 2026-11-24
 
 **Para quien lo usa**

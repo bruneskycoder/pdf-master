@@ -23,6 +23,8 @@ tmp = Path(tempfile.mkdtemp())
 pm.CONFIG = tmp / "config.json"
 pm.App._preparar_dnd = lambda self: None
 pm.App._estado_lo = lambda self: self.v_lo.set("LibreOffice: listo")
+pm.modo_efectos = lambda cfg: "completos"
+pm.buscar_soffice = lambda: "soffice"
 demo = tmp / "Facultad" / "Física II"
 demo.mkdir(parents=True)
 for n in ("TP 1 - Introducción.docx", "TP 2 - Señales y sistemas.docx",
@@ -41,7 +43,12 @@ def foto(w, nombre):
 
 
 app = pm.App()
-app.geometry("920x700+0+0")
+app.geometry(os.environ.get("GEO", "920x700+0+0"))
+
+
+def arranque():
+    foto(app, "arranque")
+    app.after(1700, vacia)
 
 
 def vacia():
@@ -82,6 +89,6 @@ def trabajando():
     app.after(800, lambda: (foto(app._win_herr, "herramientas"), app.destroy()))
 
 
-app.after(1500, vacia)
+app.after(950, arranque)
 app.mainloop()
 print("fuentes:", app.fam_titulo, "/", app.fam)
