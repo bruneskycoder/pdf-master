@@ -2,6 +2,23 @@
 
 Formato: versión, qué cambia para quien lo usa y, aparte, lo técnico.
 
+## 5.2 — 2026-11-25
+
+**Para quien lo usa**
+
+- **Siempre arranca con los efectos completos** (antes, si Windows tenía apagado «Mostrar animaciones», arrancaba en *Reducidos* y no se veía ni el arranque ni la pantalla de trabajo). Se cambia en `MÁS… » Efectos visuales`.
+- **PIN de operador** al final del arranque. Abajo, en rojo, el sistema confiesa cuál es porque está hackeado desde 1994. Cualquier respuesta entra; no es una clave real y no se guarda.
+- **Ataques falsos cada tanto:** destello rojo, encabezado corrompido y alarma en `SIS>`, que se resuelve sola a los dos segundos con un chiste. Nunca escriben en el registro.
+- **Fallas rojas** que se recuperan en el acto durante la pantalla de trabajo, y un sector de arranque «dañado» en el arranque.
+- **Capa de vidrio CRT en Windows** sobre toda la ventana: líneas de barrido, esquinas oscuras (curvatura insinuada), parpadeo y destellos. No recibe clics ni foco.
+- Más comentarios en reposo, y más seguido (cada 18 a 45 segundos).
+
+**Técnico**
+
+- Clase nueva `PantallaCRT`: ventana en capas con color transparente, `-alpha` y `WS_EX_TRANSPARENT`; sigue a la principal.
+- Corregido: un mensaje nuevo en `SIS>` no cortaba el tipeo del anterior, que seguía escribiendo encima (y en rojo, si el nuevo era una alarma).
+- 67 pruebas (la de la capa corre solo en Windows).
+
 ## 5.1 — 2026-11-25
 
 **Para quien lo usa**
