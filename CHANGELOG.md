@@ -2,6 +2,20 @@
 
 Formato: versión, qué cambia para quien lo usa y, aparte, lo técnico.
 
+## 5.3 — 2026-11-25
+
+**Para quien lo usa**
+
+- **Modo intrusión** antes de convertir (con efectos completos): un simulador de hacker. Cualquier tecla escribe código ficticio con colores y los nombres reales de tus archivos; Enter arranca la conversión real, Esc vuelve sin convertir, y hay un botón para convertir sin jugar.
+- **Fallas de pantalla:** desgarros, pérdida de sincronía y apagones de 70 ms, en reposo, en el modo intrusión y mientras convierte. Como máximo tres destellos por segundo.
+- **El vidrio se nota más:** ahora son dos capas. Vidrio más marcado, con reflejo diagonal y la barra que baja lenta, y un marco casi opaco con las esquinas curvas.
+
+**Técnico**
+
+- Clases nuevas `Hackeo` y `codigo_de_intrusion`; `PantallaCRT` pasa a dos capas (`ALFA_VIDRIO` 0,32 y `ALFA_MARCO` 0,92) con `desgarro`, `sincronia` y `apagon`, y un tope de destellos.
+- Las líneas rojas del simulador esperan al fin de la línea de código para no cortarla.
+- 75 pruebas (la de las capas corre solo en Windows y verifica que ni el centro ni una esquina se coman los clics).
+
 ## 5.2 — 2026-11-25
 
 **Para quien lo usa**

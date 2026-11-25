@@ -46,7 +46,7 @@ except Exception:
     _BaseTk = tk.Tk
     HAY_DND = False
 
-VERSION = "5.2"
+VERSION = "5.3"
 CONVERTIBLES = {".docx", ".doc", ".pptx", ".ppt"}
 EXT = CONVERTIBLES | {".pdf"}
 CONFIG = Path.home() / ".convertidor_word_pdf.json"
@@ -1200,9 +1200,16 @@ def _carpeta_fuentes() -> Path:
     return Path(tempfile.gettempdir()) / "pdf-master-fuentes"
 
 
+_FUENTES_LISTAS = []
+
+
 def registrar_fuentes():
     """Deja disponibles las fuentes incluidas, solo para este programa (en Windows no se
-    instalan en el sistema). Si algo falla, la interfaz usa fuentes del sistema."""
+    instalan en el sistema). Una sola vez por proceso. Si algo falla, la interfaz usa
+    fuentes del sistema."""
+    if _FUENTES_LISTAS:
+        return
+    _FUENTES_LISTAS.append(True)
     try:
         carpeta = _carpeta_fuentes()
         carpeta.mkdir(parents=True, exist_ok=True)
@@ -1364,6 +1371,14 @@ class Guion:
          "SE LE RECORDÓ QUE YA ESTÁ ADENTRO. SE FUE CONFUNDIDO."),
         ("PÉRDIDA DE SEÑAL CON EL SATÉLITE.", "NUNCA HUBO SATÉLITE. SE NORMALIZA LA SITUACIÓN."),
         ("¡¡AUTODESTRUCCIÓN EN 10… 9… 8…", "…SE CANCELÓ POR FALTA DE PRESUPUESTO."),
+    )
+    FALLAS_VIDEO = (
+        ("SEÑAL DE VIDEO INESTABLE. NO TOQUE NADA.", "SE GOLPEÓ EL MONITOR. SEÑAL RECUPERADA."),
+        ("PÉRDIDA DE SINCRONÍA VERTICAL.", "SE GIRÓ LA PERILLA DE ATRÁS. QUEDÓ MEJOR QUE ANTES."),
+        ("EL TUBO DE RAYOS CATÓDICOS HIZO UN RUIDO PREOCUPANTE.", "ERA EL ESTÓMAGO DEL OPERADOR."),
+        ("FALLA DE ALIMENTACIÓN EN EL MONITOR.", "SE MOVIÓ EL CABLE. NO LO VUELVA A TOCAR."),
+        ("INTERFERENCIA ELECTROMAGNÉTICA DETECTADA.", "ALGUIEN PRENDIÓ EL MICROONDAS. YA TERMINÓ."),
+        ("FÓSFORO DE LA PANTALLA AGOTÁNDOSE.", "SE PIDIÓ MÁS FÓSFORO. LLEGA EN MARZO."),
     )
     FALLOS_TRABAJO = (  # líneas rojas en la pantalla de trabajo; se recuperan en el acto
         "!! FALLO DE SEGMENTACIÓN EMOCIONAL — RECUPERADO",
@@ -1772,12 +1787,17 @@ class Arranque:
 
 
 class PantallaCRT:
-    """Capa de vidrio de monitor viejo encima de toda la ventana (solo Windows): líneas de
-    barrido, esquinas oscuras que insinúan la curvatura, parpadeo y destellos. Es una ventana
-    transparente que no recibe clics ni foco y sigue a la principal. Si algo falla, no se usa."""
+    """Vidrio de monitor viejo encima de toda la ventana (solo Windows). Son dos capas
+    transparentes que no reciben clics ni foco y siguen a la principal:
+      - vidrio (opacidad media): líneas de barrido, reflejo diagonal, barra que baja lenta,
+        destellos, desgarros y pérdida de sincronía;
+      - marco (casi opaca): esquinas curvas y bisel, y los apagones de una fracción de segundo.
+    Windows solo deja una opacidad pareja por capa: por eso son dos. Si algo falla, no se usa.
+    Destellos: nunca más de tres por segundo (pauta de accesibilidad por fotosensibilidad)."""
 
     CLAVE = "#ff00fe"   # color que Windows vuelve transparente
-    ALFA, RADIO = 0.24, 70
+    ALFA_VIDRIO, ALFA_MARCO, RADIO = 0.32, 0.92, 96
+    ESTILO = 0x80000 | 0x20 | 0x80 | 0x08000000  # en capas, transparente al mouse, sin barra, sin foco
 
     @classmethod
     def crear(cls, app):
@@ -1790,39 +1810,57 @@ class PantallaCRT:
 
     def __init__(self, app):
         self.app = app
-        t = self.t = tk.Toplevel(app)
+        self.t, self.c = self._capa(self.ALFA_VIDRIO)
+        self.t2, self.c2 = self._capa(self.ALFA_MARCO)
+        self._tam = None
+        self._ultimo_destello = 0.0
+        app.bind("<Configure>", self._seguir, add="+")
+        app.bind("<Unmap>", lambda e: self._ocultar() if e.widget is app else None, add="+")
+        app.bind("<Map>", lambda e: self._mostrar() if e.widget is app else None, add="+")
+        self._mostrar()
+        self._barra()
+
+    def _capa(self, alfa):
+        t = tk.Toplevel(self.app)
         t.withdraw()
         t.overrideredirect(True)
         t.configure(background=self.CLAVE)
         t.attributes("-transparentcolor", self.CLAVE)
-        t.attributes("-alpha", self.ALFA)
-        t.transient(app)
-        self.c = tk.Canvas(t, background=self.CLAVE, highlightthickness=0)
-        self.c.pack(fill="both", expand=True)
-        self._tam = None
-        app.bind("<Configure>", self._seguir, add="+")
-        app.bind("<Unmap>", lambda e: self.t.withdraw() if e.widget is app else None, add="+")
-        app.bind("<Map>", lambda e: self._mostrar() if e.widget is app else None, add="+")
-        self._mostrar()
+        t.attributes("-alpha", alfa)
+        t.transient(self.app)
+        c = tk.Canvas(t, background=self.CLAVE, highlightthickness=0)
+        c.pack(fill="both", expand=True)
+        return t, c
 
-    ESTILO = 0x80000 | 0x20 | 0x80 | 0x08000000  # en capas, transparente al mouse, sin barra, sin foco
+    @staticmethod
+    def _hwnd(t):
+        import ctypes
+        return ctypes.windll.user32.GetParent(t.winfo_id()) or t.winfo_id()
 
     def hwnd(self):
-        import ctypes
-        return ctypes.windll.user32.GetParent(self.t.winfo_id()) or self.t.winfo_id()
+        return self._hwnd(self.t)
+
+    def hwnds(self):
+        return [self._hwnd(self.t), self._hwnd(self.t2)]
 
     def _atravesable(self):
         """Que los clics la atraviesen. Tk recrea la ventana de Windows al mostrarla y el
         estilo se pierde: por eso se vuelve a poner cada vez que se muestra o se mueve."""
         import ctypes
-        u, h = ctypes.windll.user32, self.hwnd()
-        estilo = u.GetWindowLongW(h, -20)  # GWL_EXSTYLE
-        if estilo & self.ESTILO != self.ESTILO:
-            u.SetWindowLongW(h, -20, estilo | self.ESTILO)
+        u = ctypes.windll.user32
+        for h in self.hwnds():
+            estilo = u.GetWindowLongW(h, -20)  # GWL_EXSTYLE
+            if estilo & self.ESTILO != self.ESTILO:
+                u.SetWindowLongW(h, -20, estilo | self.ESTILO)
+
+    def _ocultar(self):
+        self.t.withdraw()
+        self.t2.withdraw()
 
     def _mostrar(self):
-        self.t.deiconify()
-        self.t.update_idletasks()
+        for t in (self.t, self.t2):
+            t.deiconify()
+            t.update_idletasks()
         self._atravesable()
         self._seguir()
 
@@ -1833,7 +1871,9 @@ class PantallaCRT:
         w, h = a.winfo_width(), a.winfo_height()
         if w < 10:
             return
-        self.t.geometry(f"{w}x{h}+{a.winfo_rootx()}+{a.winfo_rooty()}")
+        geo = f"{w}x{h}+{a.winfo_rootx()}+{a.winfo_rooty()}"
+        self.t.geometry(geo)
+        self.t2.geometry(geo)
         self._atravesable()
         if (w, h) != self._tam:
             self._tam = (w, h)
@@ -1841,22 +1881,60 @@ class PantallaCRT:
 
     def _dibujar(self, w, h):
         import math
-        c, r = self.c, self.RADIO
-        c.delete("all")
+        c, c2, r = self.c, self.c2, self.RADIO
+        c.delete("fijo")
         for y in range(0, h, 3):
-            c.create_line(0, y, w, y, fill="#000000")
+            c.create_line(0, y, w, y, fill="#000000", tags="fijo")
+        # reflejo del vidrio: una franja diagonal apenas más clara arriba a la izquierda
+        c.create_polygon(0, h * 0.10, w * 0.30, 0, w * 0.42, 0, 0, h * 0.26,
+                         fill="#34463a", outline="", tags="fijo")
+        c.create_polygon(0, h * 0.30, w * 0.46, 0, w * 0.49, 0, 0, h * 0.34,
+                         fill="#26342a", outline="", tags="fijo")
+        c.tag_lower("fijo")
+        # marco: esquinas curvas casi negras y bisel
+        c2.delete("all")
         for cx, cy, esq in ((r, r, (0, 0)), (w - r, r, (w, 0)), (r, h - r, (0, h)),
                             (w - r, h - r, (w, h))):
             ang0 = math.atan2(esq[1] - cy, esq[0] - cx)
             pts = [esq]
-            for k in range(-8, 9):
-                a = ang0 + k * math.pi / 32
+            for k in range(-10, 11):
+                a = ang0 + k * math.pi / 40
                 pts.append((cx + r * math.cos(a) * 1.414, cy + r * math.sin(a) * 1.414))
-            c.create_polygon(*[v for p in pts for v in p], fill="#000000", outline="")
-        c.create_rectangle(0, 0, w - 1, h - 1, outline="#000000", width=6)
+            c2.create_polygon(*[v for p in pts for v in p], fill="#000000", outline="")
+        for i, ancho in enumerate((7, 3, 1)):
+            m = (0, 9, 15)[i]
+            c2.create_rectangle(m, m, w - 1 - m, h - 1 - m, outline="#000000", width=ancho)
+
+    # ------------------------------------------------------------ animación y fallas
+    def _barra(self, y=0):
+        """La barra clara que baja lenta por la pantalla de un CRT (solo efectos completos)."""
+        try:
+            if self.app.efectos == "completos":
+                if not self.c.find_withtag("barra"):
+                    self.c.create_rectangle(0, 0, 4000, 70, fill="#1c2a20", width=0, tags="barra")
+                    self.c.tag_lower("barra")
+                h = max(self._tam[1] if self._tam else 600, 100)
+                y = (y + 2) % (h + 140)
+                self.c.coords("barra", 0, y - 70, 4000, y)
+            else:
+                self.c.delete("barra")
+            self.c.after(45, self._barra, y)
+        except tk.TclError:
+            pass
+
+    def _puede_destellar(self):
+        ahora = time.time()
+        if ahora - self._ultimo_destello < 0.7:  # con dos destellos por vez: < 3 por segundo
+            return False
+        self._ultimo_destello = ahora
+        return True
 
     def destello(self, color=ROJO, veces=2):
-        """Tinte de color sobre toda la ventana, dos veces muy rápido (ataques y alarmas)."""
+        """Tinte de color sobre toda la ventana, una o dos veces muy rápido."""
+        if not self._puede_destellar():
+            return
+        veces = min(veces, 2)
+
         def paso(i):
             try:
                 if i % 2 == 0:
@@ -1872,16 +1950,355 @@ class PantallaCRT:
     def parpadeo(self):
         """El vidrio se oscurece apenas por un instante."""
         try:
-            self.t.attributes("-alpha", self.ALFA + 0.1)
-            self.t.after(60, lambda: self.t.attributes("-alpha", self.ALFA))
+            self.t.attributes("-alpha", self.ALFA_VIDRIO + 0.12)
+            self.t.after(60, lambda: self.t.attributes("-alpha", self.ALFA_VIDRIO))
+        except tk.TclError:
+            pass
+
+    def desgarro(self):
+        """Bandas horizontales que se corren: la imagen se desgarra un instante."""
+        try:
+            h = self._tam[1] if self._tam else 600
+            azar = self.app.azar
+            for _ in range(azar.randint(2, 4)):
+                y = azar.randint(0, h)
+                self.c.create_rectangle(0, y, 4000, y + azar.randint(2, 9), width=0,
+                                        fill=azar.choice(("#2fff20", "#0a2a0c", "#ffffff")),
+                                        tags="desgarro")
+            self.c.after(110, lambda: self.c.delete("desgarro"))
+        except tk.TclError:
+            pass
+
+    def sincronia(self, paso=0, y0=None):
+        """Pérdida de sincronía vertical: un manojo de líneas brillantes cruza la pantalla."""
+        try:
+            h = self._tam[1] if self._tam else 600
+            y0 = self.app.azar.randint(0, h // 2) if y0 is None else y0
+            self.c.delete("sinc")
+            if paso < 7:
+                y = y0 + paso * h // 12
+                for k in range(5):
+                    self.c.create_line(0, y + k * 4, 4000, y + k * 4, fill="#9dff80", tags="sinc")
+                self.c.after(40, self.sincronia, paso + 1, y0)
+        except tk.TclError:
+            pass
+
+    def apagon(self):
+        """La pantalla casi se apaga por 70 ms (en la capa de marco, que es casi opaca)."""
+        if not self._puede_destellar():
+            return
+        try:
+            self.c2.create_rectangle(0, 0, 4000, 4000, fill="#000000", width=0, tags="apagon")
+            self.c2.after(70, lambda: self.c2.delete("apagon"))
         except tk.TclError:
             pass
 
     def cerrar(self):
+        for t in (self.t, self.t2):
+            try:
+                t.destroy()
+            except tk.TclError:
+                pass
+
+
+def codigo_de_intrusion(archivos, destino, azar):
+    """Código «sofisticado» para el simulador: mezcla de C, Python, assembler y SQL de la
+    burocracia, con los nombres reales de los archivos. Es decorado: no se ejecuta."""
+    nombres = [Path(a).name.replace('"', "'") for a in archivos] or ["(sin expedientes)"]
+    lista = "\n".join(f'    Expediente("{n}"),' for n in nombres)
+    destino = str(destino).replace('"', "'")
+    n = len(nombres)
+    bloques = [
+        f"""/* DIRECCIÓN DE CONVERSIÓN DOCUMENTAL :: MÓDULO DE INTRUSIÓN v{VERSION} */
+#include <burocracia.h>
+#include <sellos/supervisor.h>
+#define AUTORIZACION_NIVEL   9
+#define PAGINAS_EN_BLANCO    SI_ES_IMPAR
+
+import mesa_de_entradas as mde
+from archivo_general import Expediente, Sello, formulario_0347b
+
+expedientes = [
+{lista}
+]
+destino = "{destino}"
+""",
+        """
+def desencriptar_voluntad_del_autor(exp: Expediente) -> bytes:
+    clave = mde.solicitar_clave(nivel=AUTORIZACION_NIVEL, motivo="porque sí")
+    for capa in exp.capas_de_formato:
+        capa.quitar_margenes_raros()
+        capa.negociar_con(Word, tono="firme pero cordial")
+    return clave ^ 0x0BADCAFE
+""",
+        """
+mov   eax, [sello_supervisor]
+xor   ebx, ebx              ; se borra la culpa
+cmp   eax, 0x7C00
+jne   pedir_segunda_firma
+call  fotocopiar_por_triplicado
+push  0xDEADBEEF            ; el mate
+""",
+        f"""
+SELECT * FROM expedientes WHERE estado = 'EN TRÁMITE' AND paciencia > 0;
+UPDATE operador SET nivel = 'DUDOSO' WHERE pin = '****';
+-- {n} fila(s) afectada(s). Nadie preguntó por qué.
+""",
+        """
+for pagina in documento.paginas_impares():
+    insertar_hoja_en_blanco(despues_de=pagina)  # por si se imprime doble faz
+""",
+        """
+>>> bypass_firewall(metodo="pedir por favor")
+[ OK ] firewall convencido
+>>> rastrear_ip("127.0.0.1")
+[ OK ] el intruso sos vos
+""",
+        """
+while not mate.esta_lavado():
+    cebar(temperatura=0x50)     # 80 °C, nunca hervida
+    pasar_a_la_derecha()
+""",
+        """
+struct Sello { uint8_t tinta; char firma[64]; bool aclaracion; };
+static inline void estampar(Sello *s) { s->tinta--; asm volatile("nop"); }
+""",
+        """
+try:
+    kernel.inyectar(cafe=True, dosis=0x03)
+except ExcepcionBurocratica as e:
+    elevar_a_instancia_superior(e)   # vuelve en 30 a 45 días hábiles
+""",
+        f"""
+for i, exp in enumerate(expedientes, 1):
+    log(f"[{{i:02d}}/{n:02d}] descifrando {{exp.nombre}} ... OK")
+    exp.pdf = convertir(exp, motor="LibreOffice", solemnidad=MAXIMA)
+""",
+    ]
+    primero, resto = bloques[0], bloques[1:]
+    azar.shuffle(resto)
+    return primero + "".join(resto)
+
+
+class Hackeo:
+    """Paso previo a convertir, con efectos completos: simulador de hacker. Cualquier tecla
+    escribe código ficticio; Enter arranca la conversión real; Esc vuelve sin convertir.
+    El «nivel de hackeo» es decorado: el progreso real empieza recién al convertir."""
+
+    CARACTERES_POR_TECLA = 4
+    PALABRAS = {"def", "return", "for", "in", "while", "not", "import", "from", "as", "try",
+                "except", "struct", "static", "inline", "void", "bool", "char", "asm",
+                "volatile", "mov", "xor", "cmp", "jne", "call", "push", "SELECT", "FROM",
+                "WHERE", "UPDATE", "SET", "AND", "#include", "#define", "if", "else"}
+    IGNORAR = {"Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R", "Caps_Lock",
+               "Super_L", "Super_R", "Win_L", "Win_R", "Num_Lock", "ISO_Level3_Shift", "Tab"}
+
+    def __init__(self, app, archivos, destino, al_confirmar):
+        self.app, self.al_confirmar = app, al_confirmar
+        self.vivo, self.teclas, self.confirmado = True, 0, False
+        self.codigo = codigo_de_intrusion(archivos, destino, app.azar)
+        self.pos = 0
+        self.pendiente = None  # línea roja que espera al fin de la línea de código
+        f = self.f = tk.Frame(app, background=BG)
+        f.place(x=0, y=0, relwidth=1, relheight=1)
+        # encabezado
+        enc = self.enc = tk.Canvas(f, height=96, background=BG, highlightthickness=0)
+        enc.pack(fill="x", padx=26, pady=(14, 6))
+        enc.bind("<Configure>", lambda e: self._dibujar_encabezado(len(archivos), destino))
+        # código
+        cuerpo = tk.Frame(f, background=LINEA, padx=1, pady=1)
+        cuerpo.pack(fill="both", expand=True, padx=26)
+        self.txt = tk.Text(cuerpo, background=BG, foreground=FG, insertbackground=ACENTO,
+                           relief="flat", highlightthickness=0, wrap="none", padx=12, pady=8,
+                           font=(app.fam, 10), cursor="arrow")
+        self.txt.pack(fill="both", expand=True)
+        for tag, color in (("kw", ACENTO), ("str", VERDE), ("com", TENUE), ("num", AMBAR),
+                           ("ok", VERDE), ("err", ROJO), ("cursor", ACENTO)):
+            self.txt.tag_configure(tag, foreground=color)
+        self.txt.tag_configure("cursor", background=ACENTO)
+        self.txt.insert("end", "Tipeá cualquier cosa: el sistema escribe por vos. ENTER inicia la "
+                               "conversión real. ESC vuelve.\n\n", "com")
+        self.txt.insert("end", " ", "cursor")
+        self.txt.configure(state="disabled")
+        # pie
+        pie = ttk.Frame(f)
+        pie.pack(fill="x", padx=26, pady=(8, 16))
+        self.btn_sin = ttk.Button(pie, text="[ CONVERTIR SIN HACKEAR ]", command=self._confirmar)
+        self.btn_sin.pack(side="right")
+        ttk.Button(pie, text="[Volver]", style="Link.TButton", command=self.cerrar).pack(side="right", padx=8)
+        self.v_pie = tk.StringVar(value="ESPERANDO QUE EL OPERADOR DEMUESTRE QUE SABE ESCRIBIR…")
+        ttk.Label(pie, textvariable=self.v_pie, style="Muted.TLabel").pack(side="left")
+        self._tecla_id = app.bind("<Key>", self._tecla, add="+")
+        self.txt.bind("<Button-1>", lambda e: "break")
+        f.focus_set()
+
+    # ---------------------------------------------------------------- dibujo
+    def _dibujar_encabezado(self, n, destino):
+        c, app = self.enc, self.app
+        a, h = c.winfo_width(), 96
+        c.delete("all")
+        barrido(c, a, h)
+        c.create_rectangle(1, 1, a - 2, h - 2, outline=ROJO, tags="marco")
+        c.create_rectangle(5, 5, a - 6, h - 6, outline=LINEA)
+        texto_fosforo(c, 20, 32, "MODO INTRUSIÓN", (app.fam_titulo, 36), ROJO, anchor="w")
+        c.create_text(20, 64, anchor="w", fill=VERDE, font=(app.fam, 9),
+                      text=f"OBJETIVO REAL: {n} EXPEDIENTE(S) · DESTINO: {App._corta(destino, 60)}")
+        c.create_text(20, 82, anchor="w", fill=TENUE, font=(app.fam, 9),
+                      text="Nada de esto hackea nada: es decorado. La conversión real empieza con ENTER.")
+        c.create_text(a - 20, 30, anchor="e", fill=AMBAR, font=(app.fam, 10, "bold"),
+                      tags="nivel", text="NIVEL DE HACKEO: 0 %")
+        self.segs = []
+        for i in range(20):
+            x = a - 20 - (20 - i) * 9
+            self.segs.append(c.create_rectangle(x, 44, x + 7, 56, width=0, fill=PANEL2))
+        self._nivel()
+
+    def nivel(self):
+        return min(100, int(self.teclas / 1.4))
+
+    def _nivel(self):
+        n = self.nivel()
         try:
-            self.t.destroy()
+            self.enc.itemconfigure("nivel", text=f"NIVEL DE HACKEO: {n} %" +
+                                   ("  · LISTO PARA ENTER" if n >= 100 else ""))
+            for i, s in enumerate(self.segs):
+                self.enc.itemconfigure(s, fill=AMBAR if i < n // 5 else PANEL2)
+        except (tk.TclError, AttributeError):
+            pass
+
+    # ---------------------------------------------------------------- teclado
+    def _tecla(self, e):
+        if not self.vivo or self.confirmado:
+            return
+        if e.keysym in ("Return", "KP_Enter"):
+            self._confirmar()
+            return "break"
+        if e.keysym == "Escape":
+            self.cerrar()
+            return "break"
+        if e.keysym in self.IGNORAR:
+            return "break"
+        self.teclas += 1
+        self._escribir(self.CARACTERES_POR_TECLA + self.app.azar.randint(0, 3))
+        azar = self.app.azar
+        if self.teclas % 45 == 0:
+            self._denegado()
+        elif azar.random() < 0.02 and not self.pendiente:
+            self._falla()
+        self._nivel()
+        return "break"
+
+    def _escribir(self, cuantos):
+        t = self.txt
+        t.configure(state="normal")
+        t.delete("cursor.first", "cursor.last")
+        for _ in range(cuantos):
+            ch = self.codigo[self.pos % len(self.codigo)]
+            self.pos += 1
+            t.insert("end-1c", ch)
+            if ch == "\n":
+                self._resaltar(int(t.index("end-1c").split(".")[0]) - 1)
+                if self.pendiente:
+                    t.insert("end-1c", self.pendiente + "\n", "err")
+                    self.pendiente = None
+        t.insert("end-1c", " ", "cursor")
+        t.see("end")
+        t.configure(state="disabled")
+
+    def _resaltar(self, fila):
+        import re
+        t = self.txt
+        linea = t.get(f"{fila}.0", f"{fila}.end")
+
+        def marcar(tag, ini, fin):
+            t.tag_add(tag, f"{fila}.{ini}", f"{fila}.{fin}")
+        for m in re.finditer(r"#include|#define|\b\w+\b", linea):
+            if m.group(0) in self.PALABRAS:
+                marcar("kw", *m.span())
+        for m in re.finditer(r"\b0x[0-9A-Fa-f]+\b|\b\d+\b", linea):
+            marcar("num", *m.span())
+        for m in re.finditer(r'"[^"]*"|\'[^\']*\'', linea):
+            marcar("str", *m.span())
+        m = re.search(r"(?<!\S)(#\s(?!include|define).*|//.*|;\s.*|--\s.*|/\*.*)$", linea)
+        if m:
+            marcar("com", *m.span())
+        if linea.startswith("[ OK ]"):
+            marcar("ok", 0, len(linea))
+
+    def _linea_roja(self, texto):
+        t = self.txt
+        t.configure(state="normal")
+        t.delete("cursor.first", "cursor.last")
+        t.insert("end-1c", "\n" + texto + "\n", "err")
+        t.insert("end-1c", " ", "cursor")
+        t.see("end")
+        t.configure(state="disabled")
+
+    def _falla(self):
+        """La pantalla falla un instante; el «sistema» se recupera solo. El mensaje sale al
+        terminar la línea de código en curso, para no cortarla."""
+        app = self.app
+        self.pendiente = (app.azar.choice((
+            "Segmentation fault (core dumped) — REINTENTANDO CON MÁS FE",
+            "KERNEL PANIC: el núcleo entró en pánico. Se lo calmó con un vaso de agua.",
+            "ERROR DE PARIDAD EN LA MEMORIA 0x7C00 — SE IGNORA POR TRADICIÓN",
+            "SEÑAL DE VIDEO PERDIDA — SE GOLPEÓ EL MONITOR — SEÑAL RECUPERADA")))
+        if app.crt:
+            app.azar.choice((app.crt.desgarro, app.crt.sincronia, app.crt.apagon))()
+
+    def _denegado(self, paso=0):
+        """ACCESO DENEGADO en rojo y, enseguida, ACCESO CONCEDIDO: lo de siempre."""
+        app = self.app
+        if paso == 0:
+            self.cartel = tk.Label(self.f, text="  ACCESO DENEGADO  ", background=BG, foreground=ROJO,
+                                   font=(app.fam_titulo, 40), highlightthickness=3,
+                                   highlightbackground=ROJO, padx=20, pady=6)
+            self.cartel.place(relx=0.5, rely=0.5, anchor="center")
+            if app.crt:
+                app.crt.destello(ROJO, 1)
+            self.f.after(650, self._denegado, 1)
+        elif paso == 1:
+            self.cartel.configure(text="  ACCESO CONCEDIDO  ", foreground=ACENTO,
+                                  highlightbackground=ACENTO)
+            self.v_pie.set("SE REINTENTÓ CON LA MISMA CLAVE. ESTA VEZ FUNCIONÓ. NADIE SABE POR QUÉ.")
+            self.f.after(600, self._denegado, 2)
+        else:
+            try:
+                self.cartel.destroy()
+            except tk.TclError:
+                pass
+
+    # ---------------------------------------------------------------- salida
+    def _confirmar(self):
+        if not self.vivo or self.confirmado:
+            return
+        self.confirmado = True
+        self._linea_roja("")
+        t = self.txt
+        t.configure(state="normal")
+        t.insert("end-1c", "\n>>> INTRUSIÓN COMPLETADA (MÁS O MENOS). INICIANDO CONVERSIÓN REAL…\n", "ok")
+        t.see("end")
+        t.configure(state="disabled")
+        self.f.after(450, self._salir_y_convertir)
+
+    def _salir_y_convertir(self):
+        self.cerrar()
+        self.al_confirmar()
+
+    def cerrar(self):
+        if not self.vivo:
+            return
+        self.vivo = False
+        try:
+            self.app.unbind("<Key>", self._tecla_id)
+        except Exception:
+            pass
+        try:
+            self.f.destroy()
         except tk.TclError:
             pass
+        if self.app.hackeo is self:
+            self.app.hackeo = None
 
 
 class Teatro:
@@ -2032,6 +2449,7 @@ class Teatro:
                 self._marco_rojo()
                 if self.app.crt:
                     self.app.crt.destello(ROJO, 1)
+                    self.app.crt.desgarro()
             self._pintar_subs()
         self._progreso()
 
@@ -2144,6 +2562,7 @@ class App(_BaseTk):
         self.vigilante = None
         self.teatro = None
         self.arranque = None
+        self.hackeo = None
         self.crt = None
         self._listo = False  # True cuando termina de armarse (para no narrar el arranque)
         import random
@@ -2933,8 +3352,21 @@ class App(_BaseTk):
                "pie": self.v_pie.get() if self.v_usar_pie.get() else "",
                "rangos": dict(self.rangos)}
         self._guardar_cfg()
-        self.v_status.set("Trabajando…")
-        self._iniciar(trabajo, (elegidos, self.base, opc, instalar))
+
+        def arrancar():
+            self.v_status.set("Trabajando…")
+            self._iniciar(trabajo, (elegidos, self.base, opc, instalar))
+        self.antes_de_convertir(elegidos, arrancar)
+
+    def antes_de_convertir(self, elegidos, arrancar):
+        """Con efectos completos, el paso del simulador de hacker; si no, directo."""
+        if self.efectos != "completos":
+            return arrancar()
+        if self.hackeo:
+            self.hackeo.cerrar()
+        destino = self.v_destino.get().splitlines()[0] if self.v_destino.get() else ""
+        destino = destino.replace("Se guardan en: ", "")
+        self.hackeo = Hackeo(self, elegidos, destino, arrancar)
 
     def _guardar_cfg(self):
         self.cfg.update({
@@ -3150,8 +3582,11 @@ class App(_BaseTk):
     def _reposo(self):
         """Con el programa quieto, el sistema comenta algo o «casi se cae» (siempre se recupera)."""
         if not self.trabajando and self.efectos != "apagados":
-            if self.azar.random() < 0.45:
+            dado = self.azar.random()
+            if dado < 0.40:
                 self.ataque()
+            elif dado < 0.60:
+                self.falla_pantalla()
             else:
                 self.decir(self.guion.sacar("REPOSO"))
                 if self.efectos == "completos" and self.azar.random() < 0.3:
@@ -3159,6 +3594,19 @@ class App(_BaseTk):
                     if self.crt:
                         self.crt.parpadeo()
         self._programar_reposo()
+
+    def falla_pantalla(self):
+        """La pantalla falla (desgarro, sincronía, apagón) y el sistema lo comenta."""
+        if self.efectos == "apagados":
+            return
+        aviso, arreglo = self.guion.sacar("FALLAS_VIDEO")
+        self.decir(aviso, alarma=True)
+        if self.efectos == "completos":
+            self.enc.interferencia()
+            if self.crt:
+                self.azar.choice((self.crt.desgarro, self.crt.sincronia, self.crt.apagon))()
+                self.after(250, self.crt.desgarro)
+        self.after(1800, lambda: self.decir(arreglo) if not self.trabajando else None)
 
     def ataque(self):
         """Falso ataque: alarma roja y, dos segundos después, la resolución con chiste.
@@ -3205,7 +3653,7 @@ class App(_BaseTk):
                    .get(self.efectos, "Efectos apagados."), satirico=self.efectos != "apagados")
 
     def _ocultar_efectos(self):
-        for overlay in (self.teatro, self.arranque):
+        for overlay in (self.teatro, self.arranque, self.hackeo):
             if overlay:
                 overlay.cerrar()
 

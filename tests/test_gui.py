@@ -19,7 +19,17 @@ def app(pm, tmp_path, monkeypatch):
     try:
         a = pm.App()
     except tk.TclError as e:
-        pytest.skip(f"sin pantalla: {e}")
+        if not ES_WINDOWS:
+            pytest.skip(f"sin pantalla: {e}")
+        # En Windows siempre hay pantalla: un fallo acá no se saltea en silencio. Los runners
+        # de GitHub a veces no pueden leer los archivos de arranque de Tcl; se reintenta una
+        # sola vez y, si vuelve a fallar, la prueba falla.
+        import time
+        time.sleep(1)
+        try:
+            a = pm.App()
+        except tk.TclError as e2:
+            pytest.fail(f"Tk no arrancó en Windows dos veces seguidas: {e} / {e2}")
     a.update()
     yield a
     a.destroy()
@@ -296,15 +306,122 @@ def test_capa_crt_en_windows(app, pm):
                             app.winfo_rooty() + app.winfo_height() // 2)
     ctypes.windll.user32.WindowFromPoint.argtypes = [wintypes.POINT]
     ctypes.windll.user32.WindowFromPoint.restype = wintypes.HWND
-    debajo = ctypes.windll.user32.WindowFromPoint(centro)
-    raiz = ctypes.windll.user32.GetAncestor(debajo, 2)  # GA_ROOT
-    assert raiz != hwnd, "la capa CRT se está comiendo los clics"
+    esquina = wintypes.POINT(app.winfo_rootx() + 12, app.winfo_rooty() + 12)
+    for punto in (centro, esquina):  # en la esquina está la capa casi opaca del marco
+        debajo = ctypes.windll.user32.WindowFromPoint(punto)
+        raiz = ctypes.windll.user32.GetAncestor(debajo, 2)  # GA_ROOT
+        assert raiz not in app.crt.hwnds(), "la capa CRT se está comiendo los clics"
+    for h in app.crt.hwnds():
+        assert ctypes.windll.user32.GetWindowLongW(h, -20) & 0x20
     # minimizar y volver a mostrar no le saca la transparencia a los clics
     app.withdraw(); app.update(); app.deiconify(); app.update()
     estilo = ctypes.windll.user32.GetWindowLongW(app.crt.hwnd(), -20)
     assert estilo & 0x20, hex(estilo)
     app.crt.destello()
     app.crt.parpadeo()
+    app.crt.desgarro()
+    app.crt.sincronia()
+    app.crt.apagon()
+    _esperar(app, lambda: False, 0.5)
     app.v_efectos.set("apagados")
     app._cambiar_efectos()
     assert app.crt is None
+
+
+# ------------------------------------------------------------- 5.3: simulador de hacker
+def _evento(tecla, caracter=""):
+    import types
+    return types.SimpleNamespace(keysym=tecla, char=caracter)
+
+
+def _hackeo(app, pm, tmp_path, llamadas):
+    archivos = []
+    for n in ("TP 1 - Introducción.docx", "Clase 'Final' ñ.pptx"):  # sin comillas dobles: Windows no las permite
+        (tmp_path / n).write_bytes(b"x")
+        archivos.append(tmp_path / n)
+    app.antes_de_convertir(archivos, lambda: llamadas.append(1))
+    return app.hackeo
+
+
+def test_hackeo_cualquier_tecla_escribe_codigo(app, pm, tmp_path):
+    llamadas = []
+    h = _hackeo(app, pm, tmp_path, llamadas)
+    assert h is not None
+    antes = h.txt.get("1.0", "end")
+    for _ in range(400):
+        h._tecla(_evento("a", "a"))
+    texto = h.txt.get("1.0", "end")
+    assert len(texto) > len(antes) + 1500
+    assert "TP 1 - Introducción.docx" in texto  # los nombres reales aparecen en el código
+    assert h.nivel() == 100 and not llamadas
+    assert h.txt.tag_ranges("kw") and h.txt.tag_ranges("str")  # hay colores
+
+
+def test_hackeo_enter_arranca_la_conversion_real(app, pm, tmp_path):
+    llamadas = []
+    h = _hackeo(app, pm, tmp_path, llamadas)
+    h._tecla(_evento("x", "x"))
+    h._tecla(_evento("Return"))
+    h._tecla(_evento("Return"))  # un segundo Enter no convierte dos veces
+    assert _esperar(app, lambda: llamadas == [1], 3)
+    assert app.hackeo is None
+
+
+def test_hackeo_esc_vuelve_sin_convertir(app, pm, tmp_path):
+    llamadas = []
+    h = _hackeo(app, pm, tmp_path, llamadas)
+    h._tecla(_evento("Escape"))
+    _esperar(app, lambda: False, 0.6)
+    assert llamadas == [] and app.hackeo is None
+
+
+def test_hackeo_tiene_salida_sin_jugar(app, pm, tmp_path):
+    llamadas = []
+    h = _hackeo(app, pm, tmp_path, llamadas)
+    h.btn_sin.invoke()
+    assert _esperar(app, lambda: llamadas == [1], 3)
+
+
+def test_hackeo_denegado_y_fallas_no_rompen(app, pm, tmp_path):
+    h = _hackeo(app, pm, tmp_path, [])
+    h._denegado()
+    h._falla()
+    for _ in range(120):  # la línea roja sale al terminar la línea de código en curso
+        h._tecla(_evento("a", "a"))
+    assert _esperar(app, lambda: not h.cartel.winfo_exists(), 3)
+    rojas = [h.txt.get(a, b) for a, b in zip(*[iter(h.txt.tag_ranges("err"))] * 2)]
+    assert any(r.strip() for r in rojas)
+    assert all(h.txt.index(a).endswith(".0") for a in h.txt.tag_ranges("err")[::2])
+    assert "Segmentation" in h.txt.get("1.0", "end") or "KERNEL" in h.txt.get("1.0", "end") \
+        or "PARIDAD" in h.txt.get("1.0", "end") or "SEÑAL" in h.txt.get("1.0", "end")
+
+
+def test_sin_efectos_completos_no_hay_simulador(app, pm, tmp_path):
+    for modo in ("reducidos", "apagados"):
+        app.v_efectos.set(modo)
+        app._cambiar_efectos()
+        llamadas = []
+        assert _hackeo(app, pm, tmp_path, llamadas) is None
+        assert llamadas == [1]
+
+
+def test_convertir_pasa_por_el_simulador(app, pm, tmp_path, monkeypatch):
+    llamadas = []
+    monkeypatch.setattr(app, "_iniciar", lambda funcion, args: llamadas.append(args))
+    for n in ("a.pdf", "b.pdf"):
+        (tmp_path / n).write_bytes(b"%PDF-1.4")
+    app.agregar_rutas([str(tmp_path / "a.pdf"), str(tmp_path / "b.pdf")])
+    app.v_fusionar.set(True)
+    app.convertir()
+    assert app.hackeo is not None and not llamadas
+    app.hackeo._tecla(_evento("Return"))
+    assert _esperar(app, lambda: len(llamadas) == 1, 3)
+
+
+def test_falla_de_pantalla_se_resuelve(app):
+    app.v_efectos.set("reducidos")
+    app._cambiar_efectos()
+    app.falla_pantalla()
+    alarma = app.v_sis.get()
+    assert alarma and str(app.lbl_sis.cget("style")) == "SisR.TLabel"
+    assert _esperar(app, lambda: app.v_sis.get() != alarma, 4)
