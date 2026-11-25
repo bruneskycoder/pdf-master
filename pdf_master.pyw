@@ -46,7 +46,7 @@ except Exception:
     _BaseTk = tk.Tk
     HAY_DND = False
 
-VERSION = "5.1"
+VERSION = "5.2"
 CONVERTIBLES = {".docx", ".doc", ".pptx", ".ppt"}
 EXT = CONVERTIBLES | {".pdf"}
 CONFIG = Path.home() / ".convertidor_word_pdf.json"
@@ -1257,30 +1257,16 @@ def _tipo(p: Path):
     return "PDF" if e == ".pdf" else ("PowerPoint" if e in (".pptx", ".ppt") else "Word")
 
 
-def animaciones_del_sistema():
-    """False si en Windows está apagado «Mostrar animaciones» (Accesibilidad)."""
-    if not ES_WINDOWS:
-        return True
-    try:
-        import ctypes
-        valor = ctypes.c_int(1)
-        if ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(valor), 0):
-            return bool(valor.value)
-    except Exception:
-        pass
-    return True
-
-
 def modo_efectos(cfg):
-    """completos · reducidos (sin movimiento) · apagados (sin movimiento ni sátira)."""
+    """completos (por defecto, siempre) · reducidos (sin movimiento) · apagados (modo serio).
+    Decisión del 2026-11-25: arranca en completos aunque Windows tenga las animaciones
+    apagadas; se cambia desde MÁS… » Efectos visuales."""
     e = cfg.get("efectos")
     if e is False:
         return "apagados"
-    if e is True:
-        return "completos"
     if e in EFECTOS:
         return e
-    return "completos" if animaciones_del_sistema() else "reducidos"
+    return "completos"
 
 
 def espacio_libre(ruta):
@@ -1349,6 +1335,43 @@ class Guion:
         "SE ARCHIVÓ UN FORMULARIO 0347-B. NO SE SABE DE QUIÉN.",
         "INTEGRIDAD DEL SISTEMA: SATISFACTORIA. EL RESTO ESTÁ CLASIFICADO.",
         "AVISO: EL PASILLO B PERMANECERÁ CERRADO HASTA NUEVO AVISO. NO HAY PASILLO B.",
+        "RECORDATORIO: EL INTRUSO DE 1994 SIGUE ADENTRO. SE LO CONSIDERA PERSONAL DE PLANTA.",
+        "LA TERMINAL FUNCIONA CORRECTAMENTE. ESTO SE INFORMA PORQUE ES INUSUAL.",
+        "SE DETECTARON 0 ANOMALÍAS. SE ABRIÓ UNA INVESTIGACIÓN POR LO SOSPECHOSO DEL DATO.",
+        "EL TÉCNICO DEL SISTEMA SE JUBILÓ EN 1998. NADIE SABE CÓMO APAGARLO.",
+        "ESTADO DEL SISTEMA: AL BORDE DEL COLAPSO, COMO DE COSTUMBRE.",
+    )
+    ATAQUES = (  # (alarma en rojo, resolución): siempre se resuelve sola y con chiste
+        ("ALERTA: INTRUSO DETECTADO EN EL SECTOR 4B. ES UNA POLILLA.",
+         "SE LA INVITÓ A RETIRARSE. ACEPTÓ."),
+        ("ERROR CRÍTICO 0x0BADCAFE: SE AGOTÓ EL CAFÉ.", "SE REPUSO CON MATE. SISTEMA ESTABLE."),
+        ("UN VIRUS INTENTA CONVERTIR SUS PDF EN WORD.",
+         "BLOQUEADO. ACÁ SE CONVIERTE EN UN SOLO SENTIDO."),
+        ("FALLA EN LA MATRIZ DE CONDENSADORES. PROBABILIDAD DE COLAPSO: ALTA.",
+         "FALSA ALARMA: ERA EL VENTILADOR."),
+        ("ADVERTENCIA: EL SISTEMA ESTÁ A PUNTO DE—", "…NO. SIGUE ANDANDO. NADIE SABE POR QUÉ."),
+        ("SE DETECTÓ UN HACKER EN LA RED. PIDE QUE LE CONVIERTAN UN TRABAJO PRÁCTICO.",
+         "SE LE ASIGNÓ TURNO PARA MARZO."),
+        ("MEMORIA CORRUPTA EN EL BLOQUE 0313.", "SE RECOMPUSO CON CINTA SCOTCH."),
+        ("¡¡RUPTURA DEL NÚCLEO INMINENTE!!",
+         "ERA UN SIMULACRO. NO SE AVISÓ PORQUE ERA UN SIMULACRO."),
+        ("ALGUIEN PATEÓ EL CABLE DEL SERVIDOR.", "SE VOLVIÓ A ENCHUFAR. NO SE INICIARÁ SUMARIO."),
+        ("ATAQUE DE DENEGACIÓN DE SERVICIO: TRES PALOMAS EN LA ANTENA.",
+         "PALOMAS DISUADIDAS. SERVICIO NORMALIZADO."),
+        ("ERROR 404: NO SE ENCONTRÓ LA VOLUNTAD DE TRABAJAR.", "APARECIÓ DETRÁS DEL ARCHIVADOR."),
+        ("SOBRECARGA TÉRMICA EN EL PROCESADOR CENTRAL.", "SE ABRIÓ LA VENTANA. TEMPERATURA NORMAL."),
+        ("EL INTRUSO DE 1994 VOLVIÓ A INTENTAR ENTRAR.",
+         "SE LE RECORDÓ QUE YA ESTÁ ADENTRO. SE FUE CONFUNDIDO."),
+        ("PÉRDIDA DE SEÑAL CON EL SATÉLITE.", "NUNCA HUBO SATÉLITE. SE NORMALIZA LA SITUACIÓN."),
+        ("¡¡AUTODESTRUCCIÓN EN 10… 9… 8…", "…SE CANCELÓ POR FALTA DE PRESUPUESTO."),
+    )
+    FALLOS_TRABAJO = (  # líneas rojas en la pantalla de trabajo; se recuperan en el acto
+        "!! FALLO DE SEGMENTACIÓN EMOCIONAL — RECUPERADO",
+        "!! EL CONDENSADOR HIZO UN RUIDO RARO — IGNORADO",
+        "!! INTRUSO EN EL BUS DE DATOS — ERA UNA PELUSA",
+        "!! TEMPERATURA DEL NÚCLEO: PREOCUPANTE — SE ABANICÓ",
+        "!! VIRUS DETECTADO — SE LE PIDIÓ EL DNI Y SE FUE",
+        "!! PÁGINA 7 INTENTÓ ESCAPAR — RECAPTURADA",
     )
     TITULOS = (
         "VERIFICANDO CREDENCIALES DEL OPERADOR…",
@@ -1522,8 +1545,8 @@ class Encabezado(tk.Canvas):
             return
         self.delete("all")
         barrido(self, a, h)
-        self.create_rectangle(1, 1, a - 2, h - 2, outline=GRIS)
-        self.create_rectangle(5, 5, a - 6, h - 6, outline=LINEA)
+        self.create_rectangle(1, 1, a - 2, h - 2, outline=GRIS, tags="marco")
+        self.create_rectangle(5, 5, a - 6, h - 6, outline=LINEA, tags="marco2")
         titulo = (app.fam_titulo, 38)
         id_t = texto_fosforo(self, 20, 34, "PDF MASTER", titulo, tags="titulo", anchor="w")
         x1 = self.bbox(id_t)[2] + 6
@@ -1574,6 +1597,23 @@ class Encabezado(tk.Canvas):
         else:
             self.delete("banda")
 
+    def alarma(self, paso=0, original=None):
+        """Ataque falso: el marco titila en rojo y el subtítulo se corrompe medio segundo."""
+        if original is None:
+            original = self.itemcget("sub", "text")
+        if paso < 8:
+            rojo = paso % 2 == 0
+            self.itemconfigure("marco", outline=ROJO if rojo else GRIS)
+            self.itemconfigure("marco2", outline=ROJO if rojo else LINEA)
+            ruido = "".join(ch if ch == " " or self.app.azar.random() < 0.6
+                            else self.app.azar.choice(GLIFOS) for ch in original)
+            self.itemconfigure("sub", text=ruido, fill=ROJO)
+            self.after(70, self.alarma, paso + 1, original)
+        else:
+            self.itemconfigure("marco", outline=GRIS)
+            self.itemconfigure("marco2", outline=LINEA)
+            self.itemconfigure("sub", text=original, fill=GRIS)
+
     def _clic_titulo(self, e):
         ahora = time.time()
         self.clics = [t for t in self.clics if ahora - t < 3] + [ahora]
@@ -1583,19 +1623,19 @@ class Encabezado(tk.Canvas):
 
 
 class Arranque:
-    """Secuencia de arranque de 1,5 s. Las líneas marcadas como reales informan algo cierto
-    (fuentes, LibreOffice, preferencias, disco); el resto es ambientación. Un clic o una
-    tecla la saltean."""
+    """Secuencia de arranque y PIN de mentira. Las líneas en verde claro informan algo cierto
+    (fuentes, LibreOffice, preferencias, disco); el resto es ambientación. El PIN no es una
+    clave: cualquier respuesta entra, no se guarda ni se envía. Clic o tecla aceleran la
+    secuencia; Esc saltea todo."""
 
-    PASO_MS, FINAL_MS = 55, 650
+    PASO_MS, RESPUESTA_MS = 55, 1500
 
     def __init__(self, app):
-        self.app = app
-        self.c = tk.Canvas(app, background=BG, highlightthickness=0, cursor="hand2")
+        self.app, g = app, app.guion
+        self.c = tk.Canvas(app, background=BG, highlightthickness=0)
         self.c.place(x=0, y=0, relwidth=1, relheight=1)
-        self.c.bind("<Button-1>", lambda e: self.cerrar())
-        self._tecla = app.bind("<Key>", lambda e: self.cerrar(), add="+")
-        g = app.guion
+        self.c.bind("<Button-1>", lambda e: self._saltar())
+        self._tecla = app.bind("<Key>", self._tecla_evento, add="+")
         reales = [
             ("FUENTES DE FÓSFORO", "CARGADAS" if app.fam_titulo == FUENTE_TITULO
              else "NO DISPONIBLES, SE USA LA DEL SISTEMA"),
@@ -1605,46 +1645,115 @@ class Arranque:
         libre = espacio_libre(app.carpeta_para_espacio())
         if libre:
             reales.append(("ESPACIO LIBRE EN DISCO", en_gb(libre)))
-        sat = [g.sacar("ARRANQUE") for _ in range(5)]
+        sat = [g.sacar("ARRANQUE") for _ in range(4)]
         cuerpo = []
         for i, r in enumerate(reales):  # intercalar: real, decorado, real, decorado…
-            cuerpo.append((r, True))
+            cuerpo.append((r, "real"))
             if i < len(sat):
-                cuerpo.append((sat[i], False))
-        cuerpo += [(s, False) for s in sat[len(reales):]]
+                cuerpo.append((sat[i], "deco"))
+        cuerpo.insert(app.azar.randint(2, len(cuerpo)), (("SECTOR DE ARRANQUE 0x7C00",
+                                                          "DAÑADO. SE IGNORA"), "error"))
         self.lineas = ([("DIRECCIÓN DE CONVERSIÓN DOCUMENTAL", "titulo"),
                         (f"TERMINAL DE MESA DE ENTRADAS · REVISIÓN {VERSION} · SESIÓN {app.sesion}",
                         "sub"), ("-" * 64, "sep")]
-                       + [((f"{k} ".ljust(32, ".") + f" {v}"), "real" if real else "deco")
-                          for (k, v), real in cuerpo]
-                       + [("-" * 64, "sep"), ("ESTADO DEL SISTEMA: OPERATIVO", "fin"),
-                          ("BIENVENIDO, OPERADOR. SU NÚMERO DE TURNO ES EL 001.", "fin")])
-        self.n, self.vivo = 0, True
+                       + [((f"{k} ".ljust(32, ".") + f" {v}"), tipo) for (k, v), tipo in cuerpo]
+                       + [("-" * 64, "sep"), ("ESTADO DEL SISTEMA: COMPROMETIDO, PERO OPERATIVO", "fin")])
+        self.pin = f"{app.azar.randrange(10000):04d}"
+        self.n, self.vivo, self.fase = 0, True, "lineas"
+        self.y = 30
         self.c.after(80, self._paso)
 
-    def _paso(self):
-        if not self.vivo:
-            return
+    def _linea(self, texto, tipo):
         c, app = self.c, self.app
-        if self.n == 0:
-            barrido(c, max(c.winfo_width(), 2000), max(c.winfo_height(), 1400))
-        texto, tipo = self.lineas[self.n]
-        y = 44 + self.n * 21
         fuente = (app.fam_titulo, 26) if tipo == "titulo" else (app.fam, 10)
-        color = {"titulo": ACENTO, "sub": GRIS, "sep": LINEA, "real": VERDE,
-                 "deco": GRIS, "fin": ACENTO}[tipo]
+        color = {"titulo": ACENTO, "sub": GRIS, "sep": LINEA, "real": VERDE, "deco": GRIS,
+                 "fin": AMBAR, "error": ROJO}[tipo]
         if tipo == "titulo":
-            texto_fosforo(c, 40, y, texto, fuente, color, anchor="w")
+            texto_fosforo(c, 40, self.y + 8, texto, fuente, color, anchor="w")
+            self.y += 34
         else:
-            c.create_text(40, y + 6, anchor="w", text=texto, font=fuente, fill=color)
+            c.create_text(40, self.y, anchor="w", text=texto, font=fuente, fill=color)
+            self.y += 19
+
+    def _paso(self):
+        if not self.vivo or self.fase != "lineas":
+            return
+        if self.n == 0:
+            barrido(self.c, max(self.c.winfo_width(), 2000), max(self.c.winfo_height(), 1400))
+        self._linea(*self.lineas[self.n])
         self.n += 1
         if self.n < len(self.lineas):
-            c.after(self.PASO_MS, self._paso)
+            self.c.after(self.PASO_MS, self._paso)
         else:
-            c.create_text(40, y + 30, anchor="w", fill=TENUE, font=(app.fam, 9),
-                          text="(Las líneas en verde claro son verificaciones reales; el resto, "
-                               "ambientación. Clic para seguir.)")
-            c.after(self.FINAL_MS, self.cerrar)
+            self.c.after(350, self._pedir_pin)
+
+    def _saltar(self):
+        """Clic o tecla durante la secuencia: se escribe todo de golpe y se pasa al PIN."""
+        if self.fase != "lineas" or not self.vivo:
+            return
+        if self.n == 0:
+            barrido(self.c, max(self.c.winfo_width(), 2000), max(self.c.winfo_height(), 1400))
+        while self.n < len(self.lineas):
+            self._linea(*self.lineas[self.n])
+            self.n += 1
+        self._pedir_pin()
+
+    def _tecla_evento(self, e):
+        if self.fase == "lineas" and e.keysym != "Escape":
+            self._saltar()
+
+    def _pedir_pin(self):
+        if not self.vivo or self.fase == "pin":
+            return
+        self.fase = "pin"
+        c, app = self.c, self.app
+        y = self.y + 26
+        texto_fosforo(c, 40, y, "ACCESO RESTRINGIDO", (app.fam_titulo, 30), ACENTO, anchor="w")
+        c.create_text(40, y + 34, anchor="w", fill=FG, font=(app.fam, 10),
+                      text="INGRESE SU PIN DE OPERADOR Y PRESIONE ENTER:")
+        self.entrada = tk.Entry(c, show="*", width=6, font=(app.fam_titulo, 26), justify="center",
+                                background=PANEL, foreground=ACENTO, insertbackground=ACENTO,
+                                disabledbackground=PANEL, disabledforeground=GRIS,
+                                relief="flat", highlightthickness=1, highlightcolor=ACENTO,
+                                highlightbackground=LINEA)
+        c.create_window(40, y + 52, anchor="nw", window=self.entrada)
+        self.btn = ttk.Button(c, text="[ ENTRAR ]", command=self._validar)
+        c.create_window(170, y + 58, anchor="nw", window=self.btn)
+        c.create_text(40, y + 110, anchor="w", fill=ROJO, font=(app.fam, 10),
+                      text=f"¿OLVIDÓ EL PIN? ES {self.pin}. LO SABEMOS PORQUE EL SISTEMA ESTÁ "
+                           f"HACKEADO DESDE 1994")
+        c.create_text(40, y + 128, anchor="w", fill=ROJO, font=(app.fam, 10),
+                      text="Y EL INTRUSO LO DEJÓ ANOTADO EN UN POST-IT PEGADO AL MONITOR.")
+        c.create_text(40, y + 150, anchor="w", fill=TENUE, font=(app.fam, 9),
+                      text="(No es una clave real: no se guarda ni se envía. No escribas acá "
+                           "ninguna contraseña tuya. Esc para saltear.)")
+        self.y_resp = y + 182
+        self.entrada.bind("<Return>", self._validar)
+        self.entrada.bind("<KP_Enter>", self._validar)
+        self.entrada.focus_set()
+
+    def _validar(self, e=None):
+        if self.fase != "pin":
+            return
+        self.fase = "respuesta"
+        valor = self.entrada.get()
+        self.entrada.delete(0, "end")  # el valor no se guarda en ningún lado
+        self.entrada.configure(state="disabled")
+        self.btn.state(["disabled"])
+        if valor == self.pin:
+            lineas = (("PIN CORRECTO.", ACENTO), ("SOSPECHOSAMENTE CORRECTO. SE NOTIFICÓ AL INTRUSO.", AMBAR))
+        elif not valor:
+            lineas = (("PIN VACÍO.", AMBAR), ("ACEPTADO POR FALTA DE PERSONAL.", ACENTO))
+        else:
+            lineas = (("PIN INCORRECTO.", ROJO), ("COMO EL SISTEMA ESTÁ HACKEADO, PASE IGUAL.", ACENTO))
+        c, app, y = self.c, self.app, self.y_resp
+        for i, (t, color) in enumerate(lineas):
+            c.create_text(40, y + i * 20, anchor="w", text=t, fill=color, font=(app.fam, 10, "bold"))
+        texto_fosforo(c, 40, y + 56, "ACCESO CONCEDIDO", (app.fam_titulo, 30), ACENTO, anchor="w")
+        if app.crt:
+            app.crt.destello(ROJO if valor and valor != self.pin else ACENTO)
+        c.after(self.RESPUESTA_MS, self.cerrar)
+        return "break"
 
     def cerrar(self):
         if not self.vivo:
@@ -1660,6 +1769,119 @@ class Arranque:
             pass
         if self.app.arranque is self:
             self.app.arranque = None
+
+
+class PantallaCRT:
+    """Capa de vidrio de monitor viejo encima de toda la ventana (solo Windows): líneas de
+    barrido, esquinas oscuras que insinúan la curvatura, parpadeo y destellos. Es una ventana
+    transparente que no recibe clics ni foco y sigue a la principal. Si algo falla, no se usa."""
+
+    CLAVE = "#ff00fe"   # color que Windows vuelve transparente
+    ALFA, RADIO = 0.24, 70
+
+    @classmethod
+    def crear(cls, app):
+        if not ES_WINDOWS:
+            return None
+        try:
+            return cls(app)
+        except Exception:
+            return None
+
+    def __init__(self, app):
+        self.app = app
+        t = self.t = tk.Toplevel(app)
+        t.withdraw()
+        t.overrideredirect(True)
+        t.configure(background=self.CLAVE)
+        t.attributes("-transparentcolor", self.CLAVE)
+        t.attributes("-alpha", self.ALFA)
+        t.transient(app)
+        self.c = tk.Canvas(t, background=self.CLAVE, highlightthickness=0)
+        self.c.pack(fill="both", expand=True)
+        self._tam = None
+        app.bind("<Configure>", self._seguir, add="+")
+        app.bind("<Unmap>", lambda e: self.t.withdraw() if e.widget is app else None, add="+")
+        app.bind("<Map>", lambda e: self._mostrar() if e.widget is app else None, add="+")
+        self._mostrar()
+
+    ESTILO = 0x80000 | 0x20 | 0x80 | 0x08000000  # en capas, transparente al mouse, sin barra, sin foco
+
+    def hwnd(self):
+        import ctypes
+        return ctypes.windll.user32.GetParent(self.t.winfo_id()) or self.t.winfo_id()
+
+    def _atravesable(self):
+        """Que los clics la atraviesen. Tk recrea la ventana de Windows al mostrarla y el
+        estilo se pierde: por eso se vuelve a poner cada vez que se muestra o se mueve."""
+        import ctypes
+        u, h = ctypes.windll.user32, self.hwnd()
+        estilo = u.GetWindowLongW(h, -20)  # GWL_EXSTYLE
+        if estilo & self.ESTILO != self.ESTILO:
+            u.SetWindowLongW(h, -20, estilo | self.ESTILO)
+
+    def _mostrar(self):
+        self.t.deiconify()
+        self.t.update_idletasks()
+        self._atravesable()
+        self._seguir()
+
+    def _seguir(self, e=None):
+        if e is not None and e.widget is not self.app:
+            return
+        a = self.app
+        w, h = a.winfo_width(), a.winfo_height()
+        if w < 10:
+            return
+        self.t.geometry(f"{w}x{h}+{a.winfo_rootx()}+{a.winfo_rooty()}")
+        self._atravesable()
+        if (w, h) != self._tam:
+            self._tam = (w, h)
+            self._dibujar(w, h)
+
+    def _dibujar(self, w, h):
+        import math
+        c, r = self.c, self.RADIO
+        c.delete("all")
+        for y in range(0, h, 3):
+            c.create_line(0, y, w, y, fill="#000000")
+        for cx, cy, esq in ((r, r, (0, 0)), (w - r, r, (w, 0)), (r, h - r, (0, h)),
+                            (w - r, h - r, (w, h))):
+            ang0 = math.atan2(esq[1] - cy, esq[0] - cx)
+            pts = [esq]
+            for k in range(-8, 9):
+                a = ang0 + k * math.pi / 32
+                pts.append((cx + r * math.cos(a) * 1.414, cy + r * math.sin(a) * 1.414))
+            c.create_polygon(*[v for p in pts for v in p], fill="#000000", outline="")
+        c.create_rectangle(0, 0, w - 1, h - 1, outline="#000000", width=6)
+
+    def destello(self, color=ROJO, veces=2):
+        """Tinte de color sobre toda la ventana, dos veces muy rápido (ataques y alarmas)."""
+        def paso(i):
+            try:
+                if i % 2 == 0:
+                    self.c.create_rectangle(0, 0, 4000, 4000, fill=color, width=0, tags="destello")
+                else:
+                    self.c.delete("destello")
+                if i < veces * 2 - 1:
+                    self.c.after(80, paso, i + 1)
+            except tk.TclError:
+                pass
+        paso(0)
+
+    def parpadeo(self):
+        """El vidrio se oscurece apenas por un instante."""
+        try:
+            self.t.attributes("-alpha", self.ALFA + 0.1)
+            self.t.after(60, lambda: self.t.attributes("-alpha", self.ALFA))
+        except tk.TclError:
+            pass
+
+    def cerrar(self):
+        try:
+            self.t.destroy()
+        except tk.TclError:
+            pass
 
 
 class Teatro:
@@ -1716,7 +1938,7 @@ class Teatro:
         pw, ph = min(700, ancho - 30), 214
         x0, y0 = (ancho - pw) / 2, max((alto - ph) / 2, 4)
         self.x0, self.pw = x0, pw
-        c.create_rectangle(x0, y0, x0 + pw, y0 + ph, fill=BG, outline=ACENTO, tags="panel")
+        c.create_rectangle(x0, y0, x0 + pw, y0 + ph, fill=BG, outline=ACENTO, tags=("panel", "marco_t"))
         c.create_rectangle(x0 + 4, y0 + 4, x0 + pw - 4, y0 + ph - 4, outline=LINEA, tags="panel")
         f, fx = app.fam, x0 + 20
         c.create_text(fx, y0 + 20, anchor="w", fill=TENUE, font=(f, 9), tags="panel",
@@ -1783,7 +2005,9 @@ class Teatro:
     def _pintar_subs(self):
         for i, item in enumerate(self.t_subs):
             texto = self.subs[i] if i < len(self.subs) else ""
-            self.c.itemconfigure(item, text=texto, fill=GRIS if i == len(self.subs) - 1 else TENUE)
+            color = (ROJO if texto.startswith("[PROC") and "!!" in texto else
+                     GRIS if i == len(self.subs) - 1 else TENUE)
+            self.c.itemconfigure(item, text=texto, fill=color)
 
     def _texto(self):
         if self.final:
@@ -1801,9 +2025,23 @@ class Teatro:
         if self.t_sub <= 0:
             self.t_sub = self.SUBPROCESO_MS + self.azar.randint(-250, 400)
             self.n_proc += self.azar.randint(1, 3)
-            self.subs = (self.subs + [f"[PROC {self.n_proc:04d}] {self.guion.sacar('SUBPROCESOS')}"])[-3:]
+            falla = self.azar.random() < 0.14
+            texto = self.guion.sacar("FALLOS_TRABAJO" if falla else "SUBPROCESOS")
+            self.subs = (self.subs + [f"[PROC {self.n_proc:04d}] {texto}"])[-3:]
+            if falla:  # el marco titila en rojo y el vidrio destella: el sistema casi se cae
+                self._marco_rojo()
+                if self.app.crt:
+                    self.app.crt.destello(ROJO, 1)
             self._pintar_subs()
         self._progreso()
+
+    def _marco_rojo(self, paso=0):
+        try:
+            self.c.itemconfigure("marco_t", outline=ROJO if paso % 2 == 0 else ACENTO)
+            if paso < 5:
+                self.c.after(90, self._marco_rojo, paso + 1)
+        except tk.TclError:
+            pass
 
     def _progreso(self):
         b = self.app.barra
@@ -1906,6 +2144,7 @@ class App(_BaseTk):
         self.vigilante = None
         self.teatro = None
         self.arranque = None
+        self.crt = None
         self._listo = False  # True cuando termina de armarse (para no narrar el arranque)
         import random
         self.azar = random.Random()
@@ -1969,6 +2208,8 @@ class App(_BaseTk):
         self.after(1000, self._tic)
         self._programar_reposo()
         self._listo = True
+        if self.efectos != "apagados":
+            self.crt = PantallaCRT.crear(self)
         self.decir_accion("listo")
         if self.efectos == "completos" and self.ARRANQUE:
             self.arranque = Arranque(self)
@@ -2005,6 +2246,7 @@ class App(_BaseTk):
         st.configure("Big.TLabel", font=(texto, 11), foreground=GRIS, background=PANEL)
         st.configure("Sis.TLabel", font=(texto, 10), foreground=GRIS)
         st.configure("SisP.TLabel", font=(texto, 10, "bold"), foreground=ACENTO)
+        st.configure("SisR.TLabel", font=(texto, 10, "bold"), foreground=ROJO)
         # botones: secundario (borde verde), principal (verde lleno), enlace (texto)
         st.configure("TButton", background=PANEL, foreground=ACENTO, bordercolor=LINEA,
                      lightcolor=PANEL, darkcolor=PANEL, borderwidth=1, relief="solid",
@@ -2126,8 +2368,9 @@ class App(_BaseTk):
         fc.pack(fill="x", pady=(6, 0))
         ttk.Label(fc, text="SIS>", style="SisP.TLabel").pack(side="left")
         self.v_sis = tk.StringVar(value="")
-        ttk.Label(fc, textvariable=self.v_sis, style="Sis.TLabel").pack(side="left", padx=(6, 0))
-        self._sis_cola, self._sis_tarea = [], None
+        self.lbl_sis = ttk.Label(fc, textvariable=self.v_sis, style="Sis.TLabel")
+        self.lbl_sis.pack(side="left", padx=(6, 0))
+        self._sis_tarea = None
 
         # --- parte media en grid: la lista es lo único que se estira o se achica
         self.medio = medio = ttk.Frame(cont)
@@ -2846,32 +3089,27 @@ class App(_BaseTk):
     # ----------------------------------------------------------- herramientas PDF
 
     # ------------------------------------------------------- consola del sistema
-    def decir(self, texto, satirico=True):
-        """Escribe en la línea SIS>. Lo satírico no sale en modo apagado."""
+    def decir(self, texto, satirico=True, alarma=False):
+        """Escribe en la línea SIS>. Lo satírico no sale en modo apagado; alarma = en rojo.
+        Un mensaje nuevo corta el tipeo del anterior (si no, lo viejo se escribiría encima)."""
         if not texto or (satirico and self.efectos == "apagados"):
             return
+        if self._sis_tarea:
+            try:
+                self.after_cancel(self._sis_tarea)
+            except (tk.TclError, ValueError):
+                pass
+            self._sis_tarea = None
+        self.lbl_sis.configure(style="SisR.TLabel" if alarma else "Sis.TLabel")
         if self.efectos != "completos":
             self.v_sis.set(texto)
-            return
-        self._sis_cola = [texto]  # lo nuevo pisa a lo que esperaba
-        if not self._sis_tarea:
-            self._sis_tipear()
+        else:
+            self._sis_tipear(texto, 0)
 
-    def _sis_tipear(self, texto=None, i=0):
-        if texto is None:
-            if not self._sis_cola:
-                self._sis_tarea = None
-                return
-            texto, i = self._sis_cola.pop(0), 0
-        if self._sis_cola:  # llegó otro: se termina de golpe y se sigue con el nuevo
-            self.v_sis.set(texto)
-            return self._sis_tipear()
+    def _sis_tipear(self, texto, i):
         i = min(i + 2, len(texto))
         self.v_sis.set(texto[:i] + ("_" if i < len(texto) else ""))
-        if i < len(texto):
-            self._sis_tarea = self.after(16, self._sis_tipear, texto, i)
-        else:
-            self._sis_tarea = None
+        self._sis_tarea = self.after(16, self._sis_tipear, texto, i) if i < len(texto) else None
 
     def decir_accion(self, clave, **datos):
         datos.setdefault("n", 0)
@@ -2907,15 +3145,34 @@ class App(_BaseTk):
         self.after(1000, self._tic)
 
     def _programar_reposo(self):
-        self.after(self.azar.randint(45, 110) * 1000, self._reposo)
+        self.after(self.azar.randint(18, 45) * 1000, self._reposo)
 
     def _reposo(self):
-        """De vez en cuando, con el programa quieto, el sistema comenta algo."""
+        """Con el programa quieto, el sistema comenta algo o «casi se cae» (siempre se recupera)."""
         if not self.trabajando and self.efectos != "apagados":
-            self.decir(self.guion.sacar("REPOSO"))
-            if self.efectos == "completos" and self.azar.random() < 0.3:
-                self.enc.interferencia()
+            if self.azar.random() < 0.45:
+                self.ataque()
+            else:
+                self.decir(self.guion.sacar("REPOSO"))
+                if self.efectos == "completos" and self.azar.random() < 0.3:
+                    self.enc.interferencia()
+                    if self.crt:
+                        self.crt.parpadeo()
         self._programar_reposo()
+
+    def ataque(self):
+        """Falso ataque: alarma roja y, dos segundos después, la resolución con chiste.
+        Nunca escribe en el registro ni abre ventanas: los errores reales van por otro lado."""
+        if self.efectos == "apagados":
+            return
+        alarma, resolucion = self.guion.sacar("ATAQUES")
+        self.decir(alarma, alarma=True)
+        if self.efectos == "completos":
+            self.enc.alarma()
+            self.enc.interferencia()
+            if self.crt:
+                self.crt.destello(ROJO)
+        self.after(2200, lambda: self.decir(resolucion) if not self.trabajando else None)
 
     def _decodificar(self, boton, paso=0, original=None):
         """Al pasar el mouse, el texto del botón se «decodifica» (solo en efectos completos)."""
@@ -2938,6 +3195,11 @@ class App(_BaseTk):
         guardar_config(self.cfg)
         if self.efectos != "completos":
             self._ocultar_efectos()
+        if self.efectos == "apagados" and self.crt:
+            self.crt.cerrar()
+            self.crt = None
+        elif self.efectos != "apagados" and not self.crt:
+            self.crt = PantallaCRT.crear(self)
         self.decir({"completos": "EFECTOS COMPLETOS RESTABLECIDOS. EL SISTEMA RECUPERA SU DIGNIDAD.",
                     "reducidos": "EFECTOS REDUCIDOS. EL SISTEMA SEGUIRÁ OPINANDO, PERO QUIETO."}
                    .get(self.efectos, "Efectos apagados."), satirico=self.efectos != "apagados")

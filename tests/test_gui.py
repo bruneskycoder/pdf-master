@@ -127,10 +127,14 @@ def test_lluvia_aguanta_ventanas_chicas(app, pm):
 def test_la_animacion_es_un_solo_bucle(app):
     """Llamarla varias veces no apila bucles: antes eso colgó la CI de Windows."""
     app._iniciar(lambda emit: None, ())
-    pendientes_antes = len(app.tk.call("after", "info"))
+
+    def bucles():  # tareas pendientes que son un cuadro de la animación
+        return sum("_cuadro" in str(app.tk.call("after", "info", t)[0])
+                   for t in app.tk.call("after", "info"))
+    assert bucles() == 1
     for _ in range(20):
         app.teatro._cuadro()
-    assert len(app.tk.call("after", "info")) == pendientes_antes
+    assert bucles() == 1
     app.update()
     assert app.teatro.vivo
 
@@ -140,8 +144,7 @@ def test_modo_efectos(pm, monkeypatch):
     assert pm.modo_efectos({"efectos": False}) == "apagados"  # configuración de la 5.0
     assert pm.modo_efectos({"efectos": True}) == "completos"
     assert pm.modo_efectos({"efectos": "reducidos"}) == "reducidos"
-    monkeypatch.setattr(pm, "animaciones_del_sistema", lambda: False)
-    assert pm.modo_efectos({}) == "reducidos"  # respeta «Mostrar animaciones» de Windows
+    assert pm.modo_efectos({}) == "completos"  # siempre completos, salvo que se elija otro
 
 
 def test_guion_usa_los_datos_reales(pm):
@@ -181,7 +184,7 @@ def test_cada_accion_deja_constancia(app, tmp_path):
     assert "SE DESAFECTARON 1" in app.v_sis.get()
 
 
-def test_arranque_se_saltea_con_un_clic(app, pm):
+def test_arranque_clic_adelanta_hasta_el_pin(app, pm):
     app.arranque = pm.Arranque(app)
     app.update()
     textos = [l for l, _ in app.arranque.lineas]
@@ -189,7 +192,7 @@ def test_arranque_se_saltea_con_un_clic(app, pm):
     assert any(t.startswith("LIBREOFFICE") for t in textos)
     app.arranque.c.event_generate("<Button-1>", x=5, y=5, when="now")
     app.update()
-    assert app.arranque is None
+    assert app.arranque.fase == "pin"
 
 
 def test_barra_segmentada_se_usa_como_progressbar(app):
@@ -215,3 +218,93 @@ def test_mensaje_oculto_y_reposo(app):
     app.enc.interferencia()
     _esperar(app, lambda: False, 0.5)
     assert app.enc.winfo_exists()
+
+
+# ------------------------------------------------------------- 5.2: PIN, ataques, CRT
+def test_pin_deja_pasar_cualquier_respuesta_y_no_guarda_nada(app, pm):
+    for valor, esperado in (("1", "PIN INCORRECTO."), ("", "PIN VACÍO."), (None, "PIN CORRECTO.")):
+        app.arranque = a = pm.Arranque(app)
+        a._saltar()
+        assert a.fase == "pin"
+        a.entrada.insert(0, a.pin if valor is None else valor)
+        a._validar()
+        app.update()
+        textos = [a.c.itemcget(i, "text") for i in a.c.find_all() if a.c.type(i) == "text"]
+        assert esperado in textos and "ACCESO CONCEDIDO" in textos
+        assert a.entrada.get() == ""  # el valor tipeado no queda en ningún lado
+        assert any("HACKEADO DESDE 1994" in t and a.pin in t for t in textos)
+        a.cerrar()
+        assert app.arranque is None
+
+
+def test_escape_saltea_el_arranque(app, pm):
+    app.arranque = pm.Arranque(app)
+    app._ocultar_efectos()
+    assert app.arranque is None
+
+
+def test_mensaje_nuevo_corta_el_tipeo_anterior(app):
+    app.decir("MENSAJE LARGO " * 8)
+    app.decir("CORTO", alarma=True)
+    _esperar(app, lambda: False, 0.4)
+    assert app.v_sis.get() == "CORTO"
+    assert str(app.lbl_sis.cget("style")) == "SisR.TLabel"
+
+
+def test_ataque_falso_se_resuelve_solo_y_no_ensucia_el_registro(app, pm, monkeypatch):
+    app.v_efectos.set("reducidos")  # sin tipeo, para leer enseguida
+    app._cambiar_efectos()
+    registro = app.log.get("1.0", "end")
+    app.ataque()
+    alarma = app.v_sis.get()
+    assert str(app.lbl_sis.cget("style")) == "SisR.TLabel" and alarma
+    assert _esperar(app, lambda: app.v_sis.get() != alarma, 4)
+    assert str(app.lbl_sis.cget("style")) == "Sis.TLabel"
+    assert app.log.get("1.0", "end") == registro
+    pares = dict(pm.Guion.ATAQUES)
+    assert pares[alarma] == app.v_sis.get()
+
+
+def test_falla_roja_en_la_pantalla_de_trabajo(app, pm):
+    app._iniciar(lambda emit: None, ())
+    t = app.teatro
+    t.azar.random = lambda: 0.0
+    t.t_sub = 0
+    t._texto()
+    assert "!!" in t.subs[-1]
+    item = t.t_subs[len(t.subs) - 1]
+    assert t.c.itemcget(item, "fill") == pm.ROJO
+
+
+def test_capa_crt_en_windows(app, pm):
+    if not pm.ES_WINDOWS:
+        assert app.crt is None
+        pytest.skip("la capa CRT es solo para Windows")
+    import ctypes
+    assert app.crt is not None
+    app.update()
+    app.crt._seguir()
+    app.update()
+    t = app.crt.t
+    assert (t.winfo_width(), t.winfo_height()) == (app.winfo_width(), app.winfo_height())
+    hwnd = app.crt.hwnd()
+    estilo = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
+    assert estilo & 0x20 and estilo & 0x80000, hex(estilo)  # no recibe clics y es una capa
+    # comportamiento real: la ventana que Windows ve bajo el mouse no puede ser la capa
+    from ctypes import wintypes
+    centro = wintypes.POINT(app.winfo_rootx() + app.winfo_width() // 2,
+                            app.winfo_rooty() + app.winfo_height() // 2)
+    ctypes.windll.user32.WindowFromPoint.argtypes = [wintypes.POINT]
+    ctypes.windll.user32.WindowFromPoint.restype = wintypes.HWND
+    debajo = ctypes.windll.user32.WindowFromPoint(centro)
+    raiz = ctypes.windll.user32.GetAncestor(debajo, 2)  # GA_ROOT
+    assert raiz != hwnd, "la capa CRT se está comiendo los clics"
+    # minimizar y volver a mostrar no le saca la transparencia a los clics
+    app.withdraw(); app.update(); app.deiconify(); app.update()
+    estilo = ctypes.windll.user32.GetWindowLongW(app.crt.hwnd(), -20)
+    assert estilo & 0x20, hex(estilo)
+    app.crt.destello()
+    app.crt.parpadeo()
+    app.v_efectos.set("apagados")
+    app._cambiar_efectos()
+    assert app.crt is None

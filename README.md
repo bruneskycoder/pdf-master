@@ -16,20 +16,27 @@ Convertí tus Word y PowerPoint a PDF de a muchos por vez y, si querés, unilos 
 
 ### La terminal y su personalidad
 
-PDF Master se ve como una terminal de fósforo verde de 1987, de una dependencia pública que se toma demasiado en serio: la «Dirección de Conversión Documental». Al abrirlo hace una secuencia de arranque, la línea `SIS>` comenta cada cosa que hacés («MESA DE ENTRADAS: 3 EXPEDIENTES RECIBIDOS. SE LABRÓ ACTA.») y, mientras convierte, la pantalla se llena de lluvia de caracteres y subprocesos solemnes que no hacen nada («[PROC 0720] FINGIENDO QUE TODO ESTO ES NECESARIO»).
+PDF Master se ve como una terminal de fósforo verde de 1987, de una dependencia pública que se toma demasiado en serio y está siempre al borde del colapso: la «Dirección de Conversión Documental».
+
+- **Al abrirlo** hace una secuencia de arranque y te pide un PIN de operador. Abajo, en rojo, te dice cuál es: «LO SABEMOS PORQUE EL SISTEMA ESTÁ HACKEADO DESDE 1994». Cualquier respuesta entra.
+- **La línea `SIS>`** comenta cada cosa que hacés («MESA DE ENTRADAS: 3 EXPEDIENTES RECIBIDOS. SE LABRÓ ACTA.»).
+- **Cada tanto, un ataque falso:** la pantalla destella en rojo, el encabezado se corrompe y aparece una alarma («UN VIRUS INTENTA CONVERTIR SUS PDF EN WORD»). Dos segundos después se resuelve sola («BLOQUEADO. ACÁ SE CONVIERTE EN UN SOLO SENTIDO.»).
+- **Mientras convierte,** la pantalla se llena de lluvia de caracteres y subprocesos solemnes que no hacen nada («[PROC 0720] FINGIENDO QUE TODO ESTO ES NECESARIO»), con alguna falla roja que se recupera en el acto.
+- **En Windows,** una capa de vidrio de monitor viejo cubre toda la ventana: líneas de barrido, esquinas oscuras que insinúan la curvatura y un parpadeo ocasional. No recibe clics: se trabaja igual que sin ella.
 
 Es sátira, y está hecha para no confundir:
 
 - **Lo real se distingue a la vista.** En el arranque, las verificaciones verdaderas (fuentes, LibreOffice, preferencias, espacio en disco) van en verde claro y el resto en verde apagado. En la pantalla de trabajo, lo único verdadero es el bloque **PROGRESO REAL** y el tiempo de ejecución del final. En el encabezado, el reloj, el espacio libre y el estado de LibreOffice son reales; el número de sesión es decorativo.
 - **Las cantidades de la línea `SIS>` son las verdaderas**: si dice 3 expedientes, agregaste 3 archivos.
-- **Los errores nunca se disfrazan.** Los avisos y las preguntas importantes salen en ventanas normales de Windows, en lenguaje llano.
-- **Se puede bajar el volumen:** `MÁS… » Efectos visuales` tiene tres niveles: *Completos*, *Reducidos* (sin movimiento, la sátira queda quieta) y *Apagados* (modo serio: sin sátira ni animación). Si en Windows desactivaste «Mostrar animaciones», arranca en *Reducidos*. Un clic o `Esc` ocultan la animación del momento.
+- **Los errores nunca se disfrazan.** Los avisos y las preguntas importantes salen en ventanas normales de Windows, en lenguaje llano. Los ataques falsos se resuelven solos y nunca escriben en el registro, que es solo de lo real.
+- **El PIN no es una clave:** no se guarda ni se envía. No escribas ahí ninguna contraseña tuya.
+- **Siempre arranca con todo encendido,** y se puede bajar el volumen en `MÁS… » Efectos visuales`: *Completos*, *Reducidos* (sin movimiento, la sátira queda quieta) o *Apagados* (modo serio: sin sátira, sin animación y sin capa de vidrio). La elección queda guardada. `Esc` saltea el arranque y oculta la animación del momento.
 
 Atajos: `Ctrl+O` agrega archivos, `Ctrl+Enter` convierte, `Esc` oculta los efectos.
 
-| Arranque | Mientras convierte |
-|---|---|
-| ![Secuencia de arranque](docs/capturas/arranque.png) | ![Pantalla de trabajo](docs/capturas/trabajando.png) |
+| PIN de operador | Ataque falso | Mientras convierte |
+|---|---|---|
+| ![PIN de operador](docs/capturas/pin_respuesta.png) | ![Ataque falso](docs/capturas/ataque.png) | ![Pantalla de trabajo](docs/capturas/trabajando.png) |
 
 ## Cómo usarlo
 
@@ -85,6 +92,7 @@ Decisiones técnicas que salieron de problemas reales:
 ## Qué no se verificó
 
 - **El aspecto en tu PC.** Las capturas de este README son de Linux. En Windows, la integración continua corre las pruebas de interfaz y saca capturas (Python 3.12 y 3.14): ahí se comprobó que las fuentes incluidas cargan y que la ventana se ve igual. No cubre los ajustes de escala de pantalla (DPI) de cada PC. La animación ajusta su ritmo si la computadora es lenta, pero no se probó en una PC lenta real.
+- **La capa de vidrio** (solo Windows) se prueba en la integración continua, pero no con dos monitores, con escalas de pantalla distintas, ni al arrastrar la ventana rápido (puede quedar un instante atrás). Las capturas de este README son de Linux, donde la capa no existe.
 - **Arrastrar y soltar**, y que **PDFsam** reciba los archivos que le manda el programa.
 - **La instalación de LibreOffice** en una PC limpia con permisos de administrador.
 - **La compresión** se probó con PDF sintéticos: cuánto reduce un PDF real con fotos depende del archivo.

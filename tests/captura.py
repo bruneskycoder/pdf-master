@@ -48,7 +48,14 @@ app.geometry(os.environ.get("GEO", "920x700+0+0"))
 
 def arranque():
     foto(app, "arranque")
-    app.after(1700, vacia)
+    app.after(900, pin)
+
+
+def pin():
+    foto(app, "pin")
+    app.arranque.entrada.insert(0, "1111")
+    app.arranque._validar()
+    app.after(500, lambda: (foto(app, "pin_respuesta"), app.after(1700, vacia)))
 
 
 def vacia():
@@ -66,6 +73,13 @@ def vacia():
 
 def principal():
     foto(app, "principal")
+    app.guion.mazos["ATAQUES"] = [("SE DETECTÓ UN HACKER EN LA RED. PIDE QUE LE CONVIERTAN UN "
+                                   "TRABAJO PRÁCTICO.", "SE LE ASIGNÓ TURNO PARA MARZO.")]
+    app.ataque()
+    app.after(420, lambda: (foto(app, "ataque"), app.after(2600, trabajar)))
+
+
+def trabajar():
     app.trabajando = True
     app.btn_conv.config(state="disabled")
     app.v_fusionar.set(False)
@@ -89,6 +103,6 @@ def trabajando():
     app.after(800, lambda: (foto(app._win_herr, "herramientas"), app.destroy()))
 
 
-app.after(950, arranque)
+app.after(700, arranque)
 app.mainloop()
 print("fuentes:", app.fam_titulo, "/", app.fam)
