@@ -19,7 +19,17 @@ def app(pm, tmp_path, monkeypatch):
     try:
         a = pm.App()
     except tk.TclError as e:
-        pytest.skip(f"sin pantalla: {e}")
+        if not ES_WINDOWS:
+            pytest.skip(f"sin pantalla: {e}")
+        # En Windows siempre hay pantalla: un fallo acá no se saltea en silencio. Los runners
+        # de GitHub a veces no pueden leer los archivos de arranque de Tcl; se reintenta una
+        # sola vez y, si vuelve a fallar, la prueba falla.
+        import time
+        time.sleep(1)
+        try:
+            a = pm.App()
+        except tk.TclError as e2:
+            pytest.fail(f"Tk no arrancó en Windows dos veces seguidas: {e} / {e2}")
     a.update()
     yield a
     a.destroy()
@@ -326,7 +336,7 @@ def _evento(tecla, caracter=""):
 
 def _hackeo(app, pm, tmp_path, llamadas):
     archivos = []
-    for n in ("TP 1 - Introducción.docx", "Clase \"3\".pptx"):
+    for n in ("TP 1 - Introducción.docx", "Clase 'Final' ñ.pptx"):  # sin comillas dobles: Windows no las permite
         (tmp_path / n).write_bytes(b"x")
         archivos.append(tmp_path / n)
     app.antes_de_convertir(archivos, lambda: llamadas.append(1))

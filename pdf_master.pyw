@@ -1200,9 +1200,16 @@ def _carpeta_fuentes() -> Path:
     return Path(tempfile.gettempdir()) / "pdf-master-fuentes"
 
 
+_FUENTES_LISTAS = []
+
+
 def registrar_fuentes():
     """Deja disponibles las fuentes incluidas, solo para este programa (en Windows no se
-    instalan en el sistema). Si algo falla, la interfaz usa fuentes del sistema."""
+    instalan en el sistema). Una sola vez por proceso. Si algo falla, la interfaz usa
+    fuentes del sistema."""
+    if _FUENTES_LISTAS:
+        return
+    _FUENTES_LISTAS.append(True)
     try:
         carpeta = _carpeta_fuentes()
         carpeta.mkdir(parents=True, exist_ok=True)
