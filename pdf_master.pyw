@@ -38,6 +38,31 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+# Cuántos mensajes o diálogos reales hay abiertos ahora: el Dr. Fósforo calla mientras haya uno.
+_MODALES = [0]
+
+
+def _vigilar_modales(modulo, nombres):
+    for nombre in nombres:
+        original = getattr(modulo, nombre, None)
+        if not callable(original):
+            continue
+
+        def envoltura(*a, _f=original, **kw):
+            _MODALES[0] += 1
+            try:
+                return _f(*a, **kw)
+            finally:
+                _MODALES[0] = max(0, _MODALES[0] - 1)
+        setattr(modulo, nombre, envoltura)
+
+
+_vigilar_modales(messagebox, ("showinfo", "showwarning", "showerror", "askyesno", "askokcancel",
+                              "askretrycancel", "askquestion", "askyesnocancel"))
+_vigilar_modales(filedialog, ("askopenfilename", "askopenfilenames", "asksaveasfilename",
+                              "askdirectory"))
+_vigilar_modales(simpledialog, ("askstring", "askinteger", "askfloat"))
+
 try:  # arrastrar y soltar (opcional)
     from tkinterdnd2 import DND_FILES, TkinterDnD
     _BaseTk = TkinterDnD.Tk
@@ -47,7 +72,7 @@ except Exception:
     _BaseTk = tk.Tk
     HAY_DND = False
 
-VERSION = "5.5"
+VERSION = "5.6"
 CONVERTIBLES = {".docx", ".doc", ".pptx", ".ppt"}
 EXT = CONVERTIBLES | {".pdf"}
 CONFIG = Path.home() / ".convertidor_word_pdf.json"
@@ -2998,6 +3023,454 @@ class Guion:
         return (llano.format(**datos) if llano else None), sat
 
 
+class GuionDoctor(Guion):
+    """El guion del Dr. Fósforo: un personaje local (no es una IA real ni usa internet).
+    Solo dice cosas ciertas sobre el programa: las cantidades, tiempos y nombres que aparecen
+    entre llaves los pone el programa con datos reales; el resto es fantasía propia del
+    doctor (sus experimentos, su vida en el tubo) y nunca habla de lo que hay dentro de los
+    archivos del operador. Las frases de la línea DR.FÓSFORO> son cortas (una línea)."""
+
+    SALUDO_MADRUGADA = (
+        "¡Buenas! Son las tantas y yo acá, brillando. Vos también despierto: qué casualidad.",
+        "Madrugada. Los electrones duermen. Yo no: soy fósforo, no tengo remedio.",
+        "¿Trabajando de madrugada? Me gusta tu estilo. Yo apago las luces con la mente.",
+        "Ey, hola. A esta hora el fósforo brilla más lindo. Es ciencia. Más o menos.",
+    )
+    SALUDO_MANANA = (
+        "¡Buen día! Desayuné electrones. Ricos, pero fríos.",
+        "Buenos días, operador. Calenté el fósforo desde temprano. Arrimate.",
+        "¡Buen día! Hoy tengo un presentimiento científico. Capaz es hambre.",
+        "Mañana linda para convertir cosas. Y para experimentos, pero esos van aparte.",
+    )
+    SALUDO_TARDE = (
+        "¡Buenas tardes! Acabo de terminar un experimento. Salió raro. Estoy contento.",
+        "Hola, hola. A la tarde el fósforo rinde más. No tengo cómo demostrarlo.",
+        "¡Operador! Justo te esperaba. Bueno, esperar no: giraba en círculos.",
+        "Buenas tardes. Me tomé un recreo de tres segundos. Fue demasiado.",
+    )
+    SALUDO_NOCHE = (
+        "Buenas noches. Es la hora en que el fósforo se luce. Mirame brillar.",
+        "¡Qué bueno que viniste! De noche me da por la ciencia profunda.",
+        "Noche cerrada y la pantalla encendida. Somos tal para cual.",
+        "Buenas noches, operador. Prometo experimentar en voz baja.",
+    )
+    SALUDO_DIA = (  # lunes … domingo (lo dice el calendario real)
+        "Lunes. Dicen que es el peor día. Yo lo encuentro fascinante: nadie sabe por qué.",
+        "Martes. Nunca pasa nada un martes. Por eso hago experimentos.",
+        "Miércoles: mitad de semana. Para mí, mitad de experimento.",
+        "Jueves. Casi viernes. El fósforo ya lo siente en los electrones.",
+        "¡Viernes! Hoy se convierte con alegría. Yo ya bailo, adentro del tubo.",
+        "Sábado. ¿Trabajando? Te admiro. Yo no tengo fin de semana: vivo en el tubo.",
+        "Domingo. Día de descanso. Yo descanso girando despacito.",
+    )
+    PIN_MAL = (
+        "Ese PIN estaba mal. No importa: acá cualquier respuesta entra. Ya lo sabías.",
+        "PIN incorrecto. Tranquilo, nadie se enoja. Yo ya vi cosas peores.",
+        "Te equivocaste de PIN y entraste igual. Esa es mi clase de seguridad.",
+    )
+    AGREGAR = (  # {n}
+        "¡{n} archivo(s) nuevos! Los miro con respeto científico.",
+        "Anoté {n} archivo(s). Con lápiz, por si me arrepiento.",
+        "{n} archivo(s) más. Esto se pone interesante, operador.",
+        "Me llegaron {n} archivo(s). Los recibí con aplausos de fósforo.",
+        "¡{n}! Hoy se trabaja en serio. Bueno, en serio-serio, no.",
+    )
+    CONVERTIR = (  # {n}
+        "Arrancamos con {n} archivo(s). Si algo explota, fui yo. Mentira: no explota nada.",
+        "¡Dale! {n} archivo(s) en la cinta. Yo miro, que es lo mío.",
+        "Ahí van {n} archivo(s). Crucemos los cables.",
+        "Procesando {n}. Yo no toco nada. Casi nada. Nada.",
+    )
+    FIN = (  # {seg}
+        "¡Listo! {seg} segundos. Los medí con mi cronómetro interno, que anda más o menos.",
+        "Terminamos en {seg} s. Ni un experimento nuevo en el medio. Bueno, uno.",
+        "{seg} segundos. Mi récord personal no lo sé: nunca lo medí.",
+        "¡Chan! {seg} s. Te lo digo con orgullo de tubo catódico.",
+        "Terminó en {seg} s. Te felicito. Y me felicito. Y felicito al tubo.",
+    )
+    FIN_HACKEO = (  # {seg}: el operador pasó por el modo intrusión
+        "Terminó en {seg} s. Te vi en modo intrusión: hackeaste con mucho estilo.",
+        "{seg} segundos. La pantalla de intrusión me dio envidia: yo también quiero código.",
+    )
+    ERROR = (  # el error es real: se lo dice sin disfrazarlo
+        "Ay, falló algo. Esto no fue un experimento mío: es real. Mirá el registro.",
+        "Hubo un error de verdad. Lo siento, operador. Abrí el registro y lo vemos juntos.",
+        "No salió. Y esta vez no es chiste: hubo errores. El registro tiene los detalles.",
+        "Uf, algo falló. No es sátira. Leé el registro, que ahí dice qué pasó.",
+        "Hubo errores. Es en serio. Tranquilo: lo leemos juntos en el registro.",
+    )
+    ESCANER_ABRE = (
+        "¡El escáner! Me encanta. Siempre quise tener ojos de cámara.",
+        "Fotos a PDF. Eso sí lo entiendo: es luz convertida en cosas.",
+        "Escáner abierto. Si me ves reflejado en el papel, no digas nada.",
+    )
+    ESCANER = (  # {n}
+        "{n} foto(s) convertidas a PDF. La luz hizo todo el trabajo, yo solo animé.",
+        "Se escanearon {n} foto(s). Clic, clic y a otra cosa.",
+        "{n} foto(s) y un PDF. Fotones a la orden.",
+    )
+    MARKDOWN = (  # {nombre}, {n}
+        "Abriste «{nombre}»: {n} palabra(s). Las leí por encima. Con respeto.",
+        "«{nombre}» tiene {n} palabra(s). Cada una con su cuota de fósforo.",
+        "{n} palabra(s) en «{nombre}». Yo en 1987 escribía menos.",
+    )
+    OCULTO = (
+        "¡Me encontraste! Soy yo: estaba escondido detrás del título.",
+        "Cinco clics en el título. Sos de los míos: curioso. Seguí así.",
+        "Ah, un curioso. Yo soy otro. Así empiezan las grandes amistades.",
+    )
+    EFECTOS_COMPLETOS = (
+        "Efectos completos. Ahora sí me puedo mover como corresponde.",
+        "Todo encendido. Me crujen los electrones de la emoción.",
+    )
+    EFECTOS_REDUCIDOS = (
+        "Modo quieto. Hablo igual, pero sin zapatear.",
+        "Efectos reducidos. Me quedo piola, sin moverme. Casi.",
+    )
+    VUELVE = (
+        "¡Volví! Gracias por prenderme. Estaba a oscuras. Literalmente.",
+        "Acá estoy otra vez. Dejame que me acomode el fósforo.",
+    )
+    BUROCRACIA = (  # respuestas a la Dirección después de un falso ataque o un aviso del SIS>
+        "Eso no fue un virus: fui yo calibrando la antena con una cuchara.",
+        "Perdón por la alarma. Probaba un experimento. Salió ruidoso.",
+        "La Dirección dice que soy «personal no autorizado». Yo digo: personal luminoso.",
+        "No les hagas caso, operador. Los sellos no brillan. Yo sí.",
+        "Ese cartel rojo lo escribió la burocracia. Yo escribo en verde, que es más sano.",
+        "Si la Dirección pregunta, yo no estaba. Estaba en el fósforo. Que es lo mismo.",
+        "Otra vez el sistema dramatizando. Yo solo giraba un destornillador.",
+        "La Dirección me quiere sacar de la planta. Les dije que no tengo planta: tengo fósforo.",
+    )
+    EXPERIMENTOS = (
+        "EXPERIMENTO 47: intentar convertir un PDF en PDF. Resultado: un PDF. Fascinante.",
+        "EXPERIMENTO 12: mirar fijo un píxel. Resultado: el píxel miró primero.",
+        "EXPERIMENTO 88: sumar uno más uno con los ojos cerrados. Resultado: dos. Sospechoso.",
+        "EXPERIMENTO 3: preguntarle la hora al reloj. Resultado: no me contestó. Maleducado.",
+        "EXPERIMENTO 61: hacerle cosquillas al cursor. Resultado: sigue ahí parado. Duro.",
+        "EXPERIMENTO 9: soplar el tubo para que brille más. Resultado: brilla igual. Me mareé.",
+        "EXPERIMENTO 25: contar los píxeles de la pantalla. Resultado: perdí la cuenta en el tercero.",
+        "EXPERIMENTO 70: ponerle un bigote al cursor. Resultado: no se nota. Ya tenía.",
+        "EXPERIMENTO 5: sacar fotos con el ojo cerrado. Resultado: todas negras. Lógico.",
+        "EXPERIMENTO 33: dejar el tubo encendido toda la noche. Resultado: sigue encendido.",
+    )
+    IDLE_2 = (  # {min}
+        "Hace {min} minutos que no tocás nada. No me quejo: estaba contando fotones.",
+        "{min} minutos de silencio. Aproveché para ensayar un discurso. Sale mal.",
+        "¿Seguís ahí? Pasaron {min} minutos. Yo sí. Siempre.",
+    )
+    IDLE_5 = (  # {min}
+        "Van {min} minutos sin que toques nada. Voy a hacer un experimento chiquito.",
+        "{min} minutos. Mi mejor amigo es el cursor y no habla. Pero escucha.",
+        "Pasaron {min} minutos. Me puse a ordenar los electrones por altura.",
+    )
+    # globos: monólogos de 2 a 4 líneas (cada tupla es un globo)
+    IDLE_15 = (  # {min}
+        ("Pasaron {min} minutos.", "Armé una montaña rusa de", "electrones para pasar el rato.",
+         "Me mareé yo solo."),
+        ("{min} minutos sin novedades.", "Si te fuiste a tomar mate,", "buen provecho. Yo me quedo",
+         "girando con dignidad."),
+        ("Hace {min} minutos que no hay", "nadie. Le conté mis teorías", "al cursor. No lo convencí."),
+    )
+    MONOLOGOS = (
+        ("Vivo en el fósforo desde 1987.", "Nadie me preguntó si quería.", "Igual me gusta: hay buena vista."),
+        ("Hoy descubrí que el verde es", "el color de la esperanza y", "de los tubos de rayos. Casual."),
+        ("Teoría del día: si apago la luz", "y la prendo rápido, ahorro", "electricidad. No funcionó."),
+        ("La Dirección dice que soy", "«personal no autorizado».", "Yo digo que soy personal", "luminoso."),
+        ("Consejo del doctor:", "tomá agua, estirá la espalda", "y no le des órdenes al tubo.", "Se ofende."),
+        ("¿Sabías que no soy una IA real?", "Soy un guion de texto local.", "Sin internet, sin espías,",
+         "solo mucho cariño."),
+        ("Anoche inventé una unidad:", "el «hertz de mate».", "No mide nada, pero reconforta."),
+        ("Mi sueño es convertir un lunes", "en un viernes.", "Estoy en la etapa de planos."),
+        ("Esto lo digo con cariño:", "sos un gran operador.", "Y eso que no me pagás."),
+        ("Un físico me dijo una vez", "que el fósforo no piensa.", "Le contesté que sí. Se fue."),
+    )
+    # qué dato real lleva cada conjunto de frases (el programa los pone; el doctor no inventa)
+    REQUIERE = {"AGREGAR": ("{n}",), "CONVERTIR": ("{n}",), "FIN": ("{seg}",),
+                "FIN_HACKEO": ("{seg}",), "ESCANER": ("{n}",), "MARKDOWN": ("{nombre}", "{n}"),
+                "IDLE_2": ("{min}",), "IDLE_5": ("{min}",), "IDLE_15": ("{min}",)}
+
+    def frase(self, clave, **datos):
+        return self.sacar(clave).format(**datos)
+
+    def lineas(self, clave, **datos):
+        return [t.format(**datos) for t in self.sacar(clave)]
+
+
+class GloboDoctor(tk.Canvas):
+    """El globo del doctor: un recuadro de borde verde abajo a la derecha, con 2 a 4 líneas que
+    se tipean, un ojo dibujado que parpadea y la firma. Se va solo o con un clic."""
+
+    def __init__(self, app, doctor, lineas):
+        import tkinter.font as tkfont
+        fuente = (app.fam, 10)
+        medida = tkfont.Font(font=fuente)
+        self.ancho = max(280, max(medida.measure(t) for t in lineas) + 56 + 18)
+        self.alto = 18 + 18 * len(lineas) + 32
+        super().__init__(app, width=self.ancho, height=self.alto, background=BG,
+                         highlightthickness=2, highlightbackground=ACENTO, highlightcolor=ACENTO,
+                         cursor="hand2")
+        self.app, self.doctor, self.lineas = app, doctor, list(lineas)
+        self.completo = "\n".join(self.lineas)
+        self.vivo, self._ids = True, []
+        self.animado = app.efectos == "completos"
+        self.pupila_dx = 0
+        self.create_oval(16, 20, 44, 40, outline=ACENTO, width=2, tags="ojo")
+        self.create_oval(27, 26, 33, 34, fill=VERDE, outline=VERDE, tags=("ojo", "pupila"))
+        self.texto = self.create_text(56, 12, anchor="nw", text="" if self.animado else self.completo,
+                                      font=fuente, fill=VERDE)
+        self.create_text(self.ancho - 14, self.alto - 10, anchor="se", text="— Dr. Fósforo",
+                         font=(app.fam, 9), fill=GRIS)
+        self.bind("<Button-1>", lambda e: self.cerrar())
+        self.colocar()
+        if self.animado:
+            self._tipear(0)
+            self._ids.append(self.after(1400, self._parpadear))
+        self._ids.append(self.after(250, self._guardia))
+        self._ids.append(self.after(max(int(doctor.GLOBO_MS), 1), self.cerrar))
+
+    def colocar(self):
+        """Arriba de la zona del botón principal, pegado a la derecha: nunca lo tapa."""
+        app = self.app
+        app.update_idletasks()
+        base = app.fr_accion.winfo_rooty() - app.winfo_rooty()
+        x = max(app.winfo_width() - self.ancho - 26, 4)
+        self.place(x=x, y=max(base - self.alto - 8, 4))
+        tk.Misc.lift(self)
+
+    def _despues(self, ms, f, *a):
+        try:
+            self._ids.append(self.after(ms, f, *a))
+        except tk.TclError:
+            pass
+
+    def _tipear(self, i):
+        if not self.vivo:
+            return
+        i = min(i + 2, len(self.completo))
+        try:
+            self.itemconfigure(self.texto, text=self.completo[:i] + ("_" if i < len(self.completo) else ""))
+        except tk.TclError:
+            return
+        if i < len(self.completo):
+            self._despues(30, self._tipear, i)
+
+    def _parpadear(self):
+        """Parpadea y mira para otro lado: como mucho una vez cada 1,8 s (nada de destellos)."""
+        if not self.vivo:
+            return
+        try:
+            self.itemconfigure("pupila", state="hidden")
+            self._despues(120, self._abrir)
+        except tk.TclError:
+            pass
+
+    def _abrir(self):
+        if not self.vivo:
+            return
+        try:
+            nuevo = self.app.azar.choice((-4, 0, 4))
+            self.move("pupila", nuevo - self.pupila_dx, 0)
+            self.pupila_dx = nuevo
+            self.itemconfigure("pupila", state="normal")
+            self._despues(self.app.azar.randint(1800, 3200), self._parpadear)
+        except tk.TclError:
+            pass
+
+    def _guardia(self):
+        """Si arranca un trabajo o se abre una pantalla encima, el globo se retira."""
+        if not self.vivo:
+            return
+        if self.doctor.bloqueado() or not self.doctor.activo():
+            self.cerrar()
+            return
+        self._despues(250, self._guardia)
+
+    def cerrar(self):
+        if not self.vivo:
+            return
+        self.vivo = False
+        for i in self._ids:
+            try:
+                self.after_cancel(i)
+            except (tk.TclError, ValueError):
+                pass
+        if self.doctor.globo_actual is self:
+            self.doctor.globo_actual = None
+        try:
+            self.destroy()
+        except tk.TclError:
+            pass
+
+
+class DrFosforo:
+    """El Dr. Fósforo: una «IA» científica chiflada que vive en el fósforo de la pantalla.
+    Es un guion local (no es una IA real, no usa internet). Habla por la línea DR.FÓSFORO> y,
+    de vez en cuando, con un globo. Reglas: nunca miente sobre el estado real (los datos los
+    pasa el programa), no habla en modo apagado ni con la casilla apagada, no abre ventanas ni
+    bloquea, calla mientras se trabaja, hay un mensaje real o una pantalla encima, y se
+    espacia: 20 s entre frases (salvo errores y fin de trabajo) y 90 s entre globos."""
+
+    PROB = 0.35            # probabilidad de comentar una acción común
+    ENTRE_FRASES_S = 20
+    ENTRE_GLOBOS_S = 90
+    GLOBO_MS = 7000
+    RETRASO_MS = 1500      # el aviso real del sistema se lee antes que el comentario
+    EVENTOS = {"agregar": "AGREGAR", "convertir": "CONVERTIR", "fin": "FIN", "error": "ERROR",
+               "escaner_abre": "ESCANER_ABRE", "escaner": "ESCANER", "markdown": "MARKDOWN",
+               "pin_mal": "PIN_MAL", "oculto": "OCULTO", "efectos_completos": "EFECTOS_COMPLETOS",
+               "efectos_reducidos": "EFECTOS_REDUCIDOS", "vuelve": "VUELVE",
+               "burocracia": "BUROCRACIA", "experimento": "EXPERIMENTOS"}
+    SIEMPRE = ("fin", "error", "vuelve")   # estas siempre tienen respuesta
+
+    def __init__(self, app):
+        self.app = app
+        self.guion = GuionDoctor(app.azar)
+        self._t = time.time          # reloj (las pruebas lo cambian)
+        self._hora = datetime.now    # fecha y hora reales (ídem)
+        self.ultima_voz = self.ultimo_globo = -1e9
+        self.globo_actual = None
+        self.hitos = set()
+        self.saludado = self.pin_mal = self.hackeo_visto = False
+        self.generacion = 0
+        app.after(app.azar.randint(25000, 45000), self._latido_periodico)
+
+    # ------------------------------------------------------------ condiciones
+    def activo(self):
+        return self.app.efectos != "apagados" and bool(self.app.v_doctor.get())
+
+    def bloqueado(self, durante_trabajo=False):
+        """Hay algo que el doctor no debe pisar: un mensaje real, una pantalla encima o un
+        trabajo en curso."""
+        a = self.app
+        return bool(_MODALES[0] or a.arranque or a.hackeo or a.teatro
+                    or (a.trabajando and not durante_trabajo))
+
+    def _franja(self):
+        h = self._hora().hour
+        return ("SALUDO_MADRUGADA" if h < 6 else "SALUDO_MANANA" if h < 12
+                else "SALUDO_TARDE" if h < 20 else "SALUDO_NOCHE")
+
+    # ------------------------------------------------------------------ voz
+    def saludar(self):
+        """Una sola vez, cuando termina el arranque (o al iniciar si no hay arranque)."""
+        if self.saludado:
+            return
+        self.saludado = True
+        if self.pin_mal:
+            texto = self.guion.frase("PIN_MAL")
+        elif self.app.azar.random() < 0.4:
+            texto = self.guion.SALUDO_DIA[self._hora().weekday()]
+        else:
+            texto = self.guion.frase(self._franja())
+        if self.activo():
+            self._luego(texto, True, self.RETRASO_MS // 2)
+
+    def reaccionar(self, evento, retraso=None, **datos):
+        """Comenta una acción real, con sus datos reales. Devuelve True si va a hablar."""
+        if evento == "hackeo":  # el comentario va con el fin del trabajo, cuando se puede leer
+            self.hackeo_visto = True
+            return False
+        urgente = evento in self.SIEMPRE
+        if not self.activo():
+            return False
+        nombre = self.EVENTOS[evento]
+        if evento in ("fin", "error"):
+            hackeo, self.hackeo_visto = self.hackeo_visto, False
+            if evento == "fin" and hackeo and self.app.azar.random() < 0.6:
+                nombre = "FIN_HACKEO"
+        if not urgente and self.app.azar.random() >= self.PROB:
+            return False
+        if "nombre" in datos and len(str(datos["nombre"])) > 28:
+            datos["nombre"] = str(datos["nombre"])[:27] + "…"
+        self._luego(self.guion.frase(nombre, **datos), urgente, retraso, evento == "convertir")
+        return True
+
+    def _luego(self, texto, urgente, retraso=None, durante_trabajo=False):
+        ms = self.RETRASO_MS if retraso is None else retraso
+        if ms <= 0:
+            self._intentar(texto, urgente, durante_trabajo, 0, self.generacion)
+        else:
+            self.app.after(ms, self._intentar, texto, urgente, durante_trabajo, 0, self.generacion)
+
+    def _intentar(self, texto, urgente, durante_trabajo, intento, generacion):
+        try:
+            if generacion != self.generacion or not self.activo():
+                return
+            if self.bloqueado(durante_trabajo):
+                if intento < (150 if urgente else 0):  # lo urgente espera a que se despeje
+                    self.app.after(1200, self._intentar, texto, urgente, durante_trabajo,
+                                   intento + 1, generacion)
+                return
+            if not urgente and self._t() - self.ultima_voz < self.ENTRE_FRASES_S:
+                return
+            self.ultima_voz = self._t()
+            self.app.decir(texto, doctor=True)
+        except tk.TclError:
+            pass
+
+    # ---------------------------------------------------------------- globo
+    def puede_globo(self, urgente=False):
+        if self.globo_actual is not None or not self.activo() or self.bloqueado():
+            return False
+        ahora = self._t()
+        return (ahora - self.ultimo_globo >= self.ENTRE_GLOBOS_S
+                and (urgente or ahora - self.ultima_voz >= self.ENTRE_FRASES_S))
+
+    def globo(self, lineas, urgente=False):
+        """Muestra el globo con esas líneas (2 a 4). Devuelve el globo o None si no corresponde."""
+        if not self.puede_globo(urgente):
+            return None
+        try:
+            self.globo_actual = GloboDoctor(self.app, self, lineas)
+        except tk.TclError:
+            self.globo_actual = None
+            return None
+        self.ultimo_globo = self.ultima_voz = self._t()
+        return self.globo_actual
+
+    def monologo(self):
+        return self.globo(self.guion.lineas("MONOLOGOS"))
+
+    # ------------------------------------------------------------ en reposo
+    def _latido_periodico(self):
+        try:
+            self.latido()
+        except tk.TclError:
+            return
+        self.app.after(self.app.azar.randint(20000, 40000), self._latido_periodico)
+
+    def latido(self):
+        """Según cuánto hace que el operador no toca nada (2, 5 y 15 minutos, una vez cada
+        uno) o, a veces, un «experimento» del doctor."""
+        if not self.activo() or self.bloqueado():
+            return
+        quieto = self._t() - self.app.ultima_accion
+        if quieto < 120:
+            self.hitos.clear()
+        minutos = int(quieto // 60)
+        for h in (15, 5, 2):
+            if quieto >= h * 60 and h not in self.hitos:
+                self.hitos |= {x for x in (2, 5, 15) if x <= h}
+                if h == 15:
+                    self.globo(self.guion.lineas("IDLE_15", min=minutos), urgente=True)
+                else:
+                    self._luego(self.guion.frase(f"IDLE_{h}", min=minutos), False, 0)
+                return
+        if quieto >= 30 and self.app.azar.random() < 0.22:
+            if self.app.azar.random() < 0.4 and self.monologo():
+                return
+            self._luego(self.guion.frase("EXPERIMENTOS"), False, 0)
+
+    def callar_globo(self):
+        if self.globo_actual is not None:
+            self.globo_actual.cerrar()
+
+    def callar(self):
+        """Corta lo que esté pendiente y guarda el globo."""
+        self.generacion += 1
+        self.callar_globo()
+
+
 class BarraSegmentada(tk.Canvas):
     """Barra de progreso de bloques. Se usa igual que ttk.Progressbar: config(maximum=,
     value=) y cget("maximum") / cget("value")."""
@@ -3276,6 +3749,7 @@ class Arranque:
             lineas = (("PIN VACÍO.", AMBAR), ("ACEPTADO POR FALTA DE PERSONAL.", ACENTO))
         else:
             lineas = (("PIN INCORRECTO.", ROJO), ("COMO EL SISTEMA ESTÁ HACKEADO, PASE IGUAL.", ACENTO))
+            self.app.doctor.pin_mal = True
         c, app, y = self.c, self.app, self.y_resp
         for i, (t, color) in enumerate(lineas):
             c.create_text(40, y + i * 20, anchor="w", text=t, fill=color, font=(app.fam, 10, "bold"))
@@ -3299,6 +3773,9 @@ class Arranque:
             pass
         if self.app.arranque is self:
             self.app.arranque = None
+        doctor = getattr(self.app, "doctor", None)
+        if doctor:
+            doctor.saludar()
 
 
 class PantallaCRT:
@@ -4125,6 +4602,9 @@ class App(_BaseTk):
         self.azar = random.Random()
         self.guion = Guion(self.azar)
         self.efectos = modo_efectos(self.cfg)
+        self.v_doctor = tk.BooleanVar(value=self.cfg.get("doctor", True) is not False)
+        self.ultima_accion = time.time()  # último toque real del operador (teclas o clics)
+        self.doctor = DrFosforo(self)
         self.sesion = f"{self.azar.randrange(16 ** 4):04X}-{self.azar.randrange(16 ** 4):04X}"
         self.expediente = ""
         self.reglas = list(self.cfg.get("reglas", []))
@@ -4176,6 +4656,8 @@ class App(_BaseTk):
         self.bind("<Control-o>", lambda e: self.elegir_archivos())
         self.bind("<Control-Return>", lambda e: self.convertir())
         self.bind("<Escape>", lambda e: self._ocultar_efectos())
+        for secuencia in ("<Key>", "<Button-1>"):
+            self.bind_all(secuencia, self._toque, add="+")
         for var in (self.v_salida_modo, self.v_salida_otra):
             var.trace_add("write", lambda *a: self._narrar_destino())
         self.after(150, self._sondear)
@@ -4188,6 +4670,11 @@ class App(_BaseTk):
         self.decir_accion("listo")
         if self.efectos == "completos" and self.ARRANQUE:
             self.arranque = Arranque(self)
+        else:
+            self.after(2500, self.doctor.saludar)
+
+    def _toque(self, e=None):
+        self.ultima_accion = time.time()
 
     # ------------------------------------------------------------------ estilo
     def _estilo(self):
@@ -4221,6 +4708,8 @@ class App(_BaseTk):
         st.configure("Big.TLabel", font=(texto, 11), foreground=GRIS, background=PANEL)
         st.configure("Sis.TLabel", font=(texto, 10), foreground=GRIS)
         st.configure("SisP.TLabel", font=(texto, 10, "bold"), foreground=ACENTO)
+        st.configure("SisDr.TLabel", font=(texto, 10), foreground=VERDE)
+        st.configure("SisDrP.TLabel", font=(texto, 10, "bold"), foreground=VERDE)
         st.configure("SisR.TLabel", font=(texto, 10, "bold"), foreground=ROJO)
         # botones: secundario (borde verde), principal (verde lleno), enlace (texto)
         st.configure("TButton", background=PANEL, foreground=ACENTO, bordercolor=LINEA,
@@ -4308,6 +4797,9 @@ class App(_BaseTk):
                              ("apagados", "Apagados (modo serio)")):
             sub.add_radiobutton(label="  " + texto + "  ", value=valor, variable=self.v_efectos,
                                 command=self._cambiar_efectos)
+        sub.add_separator()
+        sub.add_checkbutton(label="  Dr. Fósforo (la IA del sótano)  ", variable=self.v_doctor,
+                            command=self._cambiar_doctor)
         mas.add_cascade(label="  Efectos visuales", menu=sub)
         self.menu_mas = mas
 
@@ -4343,7 +4835,8 @@ class App(_BaseTk):
         self.btn_mas = enc.boton
         fc = ttk.Frame(cont)
         fc.pack(fill="x", pady=(6, 0))
-        ttk.Label(fc, text="SIS>", style="SisP.TLabel").pack(side="left")
+        self.lbl_pref = ttk.Label(fc, text="SIS>", style="SisP.TLabel")
+        self.lbl_pref.pack(side="left")
         self.v_sis = tk.StringVar(value="")
         self.lbl_sis = ttk.Label(fc, textvariable=self.v_sis, style="Sis.TLabel")
         self.lbl_sis.pack(side="left", padx=(6, 0))
@@ -4510,6 +5003,7 @@ class App(_BaseTk):
             w.lift()
             return
         self._win_esc = Escaner(self)
+        self.doctor.reaccionar("escaner_abre")
 
     def abrir_markdown(self, ruta=None):
         """Abre el lector (uno solo), con el archivo dado o preguntando cuál."""
@@ -4953,6 +5447,7 @@ class App(_BaseTk):
         destino = self.v_destino.get().splitlines()[0] if self.v_destino.get() else ""
         destino = destino.replace("Se guardan en: ", "")
         self.hackeo = Hackeo(self, elegidos, destino)
+        self.doctor.reaccionar("hackeo")
         arrancar()  # la conversión real arranca ya; el modo intrusión va encima
 
     def _guardar_cfg(self):
@@ -4974,6 +5469,7 @@ class App(_BaseTk):
         self.hubo_error = False
         self.btn_conv.config(state="disabled")
         self._cursor()
+        self.doctor.callar_globo()
         if self.teatro:
             self.teatro.cerrar()
         if self.arranque:
@@ -5110,8 +5606,9 @@ class App(_BaseTk):
     # ----------------------------------------------------------- herramientas PDF
 
     # ------------------------------------------------------- consola del sistema
-    def decir(self, texto, satirico=True, alarma=False):
-        """Escribe en la línea SIS>. Lo satírico no sale en modo apagado; alarma = en rojo.
+    def decir(self, texto, satirico=True, alarma=False, doctor=False):
+        """Escribe en la línea SIS>. Lo satírico no sale en modo apagado; alarma = en rojo;
+        doctor = habla el Dr. Fósforo (prefijo DR.FÓSFORO> y verde pálido).
         Un mensaje nuevo corta el tipeo del anterior (si no, lo viejo se escribiría encima)."""
         if not texto or (satirico and self.efectos == "apagados"):
             return
@@ -5121,7 +5618,10 @@ class App(_BaseTk):
             except (tk.TclError, ValueError):
                 pass
             self._sis_tarea = None
-        self.lbl_sis.configure(style="SisR.TLabel" if alarma else "Sis.TLabel")
+        self.lbl_sis.configure(style="SisDr.TLabel" if doctor else
+                               "SisR.TLabel" if alarma else "Sis.TLabel")
+        self.lbl_pref.configure(text="DR.FÓSFORO>" if doctor else "SIS>",
+                                style="SisDrP.TLabel" if doctor else "SisP.TLabel")
         if self.efectos != "completos":
             self.v_sis.set(texto)
         else:
@@ -5142,6 +5642,11 @@ class App(_BaseTk):
             self.decir(llano, satirico=False)
         else:
             self.decir(sat)
+        evento = {"agregar": "agregar", "carpeta": "agregar", "inicio": "convertir", "fin": "fin",
+                  "fin_error": "error", "escaner": "escaner", "markdown": "markdown",
+                  "curioso": "oculto"}.get(clave)
+        if evento and (datos["n"] > 0 or clave in ("fin", "fin_error", "curioso")):
+            self.doctor.reaccionar(evento, n=datos["n"], seg=datos["seg"], nombre=datos["nombre"])
 
     def _narrar_destino(self):
         if not self._listo:
@@ -5178,6 +5683,8 @@ class App(_BaseTk):
                 self.falla_pantalla()
             else:
                 self.decir(self.guion.sacar("REPOSO"))
+                if self.azar.random() < 0.5:
+                    self.doctor.reaccionar("burocracia", retraso=2500)
                 if self.efectos == "completos" and self.azar.random() < 0.3:
                     self.enc.interferencia()
                     if self.crt:
@@ -5196,6 +5703,7 @@ class App(_BaseTk):
                 self.azar.choice((self.crt.desgarro, self.crt.sincronia, self.crt.apagon))()
                 self.after(250, self.crt.desgarro)
         self.after(1800, lambda: self.decir(arreglo) if not self.trabajando else None)
+        self.doctor.reaccionar("burocracia", retraso=3800)
 
     def ataque(self):
         """Falso ataque: alarma roja y, dos segundos después, la resolución con chiste.
@@ -5210,6 +5718,7 @@ class App(_BaseTk):
             if self.crt:
                 self.crt.destello(ROJO)
         self.after(2200, lambda: self.decir(resolucion) if not self.trabajando else None)
+        self.doctor.reaccionar("burocracia", retraso=4600)
 
     def _decodificar(self, boton, paso=0, original=None):
         """Al pasar el mouse, el texto del botón se «decodifica» (solo en efectos completos)."""
@@ -5240,6 +5749,21 @@ class App(_BaseTk):
         self.decir({"completos": "EFECTOS COMPLETOS RESTABLECIDOS. EL SISTEMA RECUPERA SU DIGNIDAD.",
                     "reducidos": "EFECTOS REDUCIDOS. EL SISTEMA SEGUIRÁ OPINANDO, PERO QUIETO."}
                    .get(self.efectos, "Efectos apagados."), satirico=self.efectos != "apagados")
+        if self.efectos == "apagados":
+            self.doctor.callar()
+        else:
+            self.doctor.reaccionar("efectos_" + self.efectos)
+
+    def _cambiar_doctor(self):
+        """Casilla «Dr. Fósforo»: lo silencia (o lo trae de vuelta) sin tocar el resto."""
+        activo = bool(self.v_doctor.get())
+        self.cfg["doctor"] = activo
+        guardar_config(self.cfg)
+        if activo:
+            self.doctor.reaccionar("vuelve")
+        else:
+            self.doctor.callar()
+            self.decir_accion("listo")
 
     def _ocultar_efectos(self):
         for overlay in (self.teatro, self.arranque, self.hackeo):

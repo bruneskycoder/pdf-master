@@ -2,6 +2,20 @@
 
 Formato: versión, qué cambia para quien lo usa y, aparte, lo técnico.
 
+## 5.6 — 2026-11-27
+
+**Para quien lo usa**
+
+- **Nuevo personaje: el Dr. Fósforo**, una «IA» científica chiflada que vive en el fósforo de la pantalla desde 1987. Saluda según la hora y el día reales, comenta lo que hacés (archivos agregados, conversión, tiempo real al terminar, escáner, Markdown, PIN equivocado, el mensaje oculto), cuenta «experimentos» y te habla si pasan 2, 5 o 15 minutos sin que toques nada. A veces le contesta a la burocracia después de un falso ataque. Habla en la línea `DR.FÓSFORO>` (verde pálido) y, de vez en cuando, en un globo abajo a la derecha que se va solo a los 7 segundos o con un clic.
+- Es un guion local: no es una IA real y no usa internet. Los números, nombres y tiempos que dice son los reales; ante un error real lo dice en serio. No habla en modo apagado, mientras se trabaja, con una pantalla de efectos encima ni con un mensaje real abierto; entre dos frases deja al menos 20 s (salvo errores y fin del trabajo) y entre dos globos 90 s.
+- `MÁS… » Efectos visuales » Dr. Fósforo (la IA del sótano)` lo silencia sin tocar el resto. Se guarda como `"doctor"` en la configuración (el archivo sigue siendo el mismo).
+
+**Técnico**
+
+- Clases `GuionDoctor` (hereda de `Guion`, así que usa `sacar` sin repetir), `GloboDoctor` (canvas con ojo que parpadea, sin glifos) y `DrFosforo` (`reaccionar(evento, **datos)`, `saludar`, `latido`, `globo`). Estilos `SisDr.TLabel` y `SisDrP.TLabel`.
+- `decir(..., doctor=True)`; `App.ultima_accion` (teclas y clics) para el reposo; los mensajes y diálogos reales de `tkinter` quedan envueltos con un contador (`_MODALES`) para que el doctor calle mientras haya uno abierto.
+- Pruebas nuevas en `tests/test_doctor.py`; el fixture `app` de `tests/test_gui.py` arranca con el doctor apagado para no mezclar sus comentarios al azar con las demás pruebas. Captura nueva: `docs/capturas/doctor.png`.
+
 ## 5.5 — 2026-11-27
 
 **Para quien lo usa**

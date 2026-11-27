@@ -11,6 +11,7 @@ ES_WINDOWS = sys.platform.startswith("win")
 @pytest.fixture
 def app(pm, tmp_path, monkeypatch):
     monkeypatch.setattr(pm, "CONFIG", tmp_path / "config.json")
+    (tmp_path / "config.json").write_text('{"doctor": false}', encoding="utf-8")  # el Dr. Fósforo tiene sus pruebas aparte
     monkeypatch.setattr(pm, "HAY_DND", False)
     monkeypatch.setattr(pm.App, "_preparar_dnd", lambda self: None)
     monkeypatch.setattr(pm.App, "ARRANQUE", False)
