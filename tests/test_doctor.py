@@ -291,10 +291,19 @@ def test_reposo_2_5_y_15_minutos(dr, app, pm, monkeypatch):
 
 
 def test_el_toque_real_actualiza_la_ultima_interaccion(app):
+    # Un clic siempre llega a su ventana. Una tecla, solo a la que tiene el foco: en la CI de
+    # Windows la ventana de prueba no está en primer plano, así que la tecla se prueba con foco.
     app.ultima_accion = 0
-    app.event_generate("<Key>", keysym="a", when="now")
+    app.tabla.event_generate("<Button-1>", x=5, y=5, when="now")
     app.update()
     assert app.ultima_accion > 0
+    app.ultima_accion = 0
+    app.focus_force()
+    app.update()
+    if app.focus_get() is not None:
+        app.focus_get().event_generate("<Key>", keysym="a", when="now")
+        app.update()
+        assert app.ultima_accion > 0
 
 
 def test_decir_accion_dispara_las_reacciones_con_datos_reales(dr, app, monkeypatch):
