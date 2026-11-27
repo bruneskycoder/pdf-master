@@ -1522,7 +1522,11 @@ def pdf_op(cfg, emit, timeout=1800, instalar=True):
     try:
         f = tmp / "cfg.json"
         f.write_text(json.dumps(cfg), encoding="utf-8")
-        r = subprocess.run([str(py), "-c", CODIGO_PDF, str(f)], capture_output=True,
+        # El motor va en un archivo y no con "-c": Windows corta la línea de comandos en
+        # 32.767 caracteres y el código del motor ya es más largo (rompió la 5.7 en Windows).
+        motor = tmp / "motor_pdf.py"
+        motor.write_text(CODIGO_PDF, encoding="utf-8")
+        r = subprocess.run([str(py), str(motor), str(f)], capture_output=True,
                            text=True, encoding="utf-8", errors="replace", timeout=timeout,
                            creationflags=NO_WINDOW)
         for linea in reversed(r.stdout.splitlines()):

@@ -559,7 +559,7 @@ def test_el_resultado_no_tiene_bordes_oscuros(motor, tmp_path, modo):
     px = L.load()
     for nombre, caja in franjas.items():
         if modo == "aclarar":
-            minimo = min(L.crop(caja).getdata())
+            minimo = L.crop(caja).getextrema()[0]
             assert minimo >= 200, (nombre, minimo)
             continue
         # el papel sintético tiene sombra: cada píxel de la franja se compara con el papel
