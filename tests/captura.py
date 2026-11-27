@@ -42,6 +42,44 @@ def foto(w, nombre):
     print("captura:", SALIDA / f"{nombre}.png")
 
 
+MD_EJEMPLO = """# Análisis Matemático I
+
+Apuntes de la **clase 4**: límites y continuidad. *Borrador*, falta revisar los ejemplos.
+
+## Qué vemos hoy
+
+- Definición de límite
+- Propiedades del límite
+  - suma y producto
+  - cociente (si el denominador no se anula)
+- [x] Leer el capítulo 2
+- [ ] Resolver la guía de ejercicios
+
+> Un límite no dice qué vale la función en el punto, sino hacia dónde va.
+
+### Valores de ejemplo
+
+| Función | Punto | Límite |
+|---|---|---:|
+| f(x) = 2x + 1 | 3 | 7 |
+| g(x) = x^2 | -2 | 4 |
+| h(x) = 1 / x | 0 | no existe |
+
+### En código
+
+```python
+def f(x):
+    return 2 * x + 1
+
+print(f(3))  # 7
+```
+
+---
+
+Más material en la [página de la cátedra](https://ejemplo.org/catedra) y en `guia-4.md`.
+"""
+
+
 app = pm.App()
 app.geometry(os.environ.get("GEO", "920x700+0+0"))
 
@@ -84,6 +122,9 @@ def hackear():
     app.antes_de_convertir(sorted(demo.iterdir()), lambda: None)
     for i in range(330):
         app.hackeo._tecla(types.SimpleNamespace(keysym="a", char="a"))
+    app.barra.config(maximum=5, value=2)
+    app.v_status.set("OK  TP 2 - Señales y sistemas.docx")
+    app.hackeo._tick_ahora()
     app.hackeo.pendiente = "KERNEL PANIC: el núcleo entró en pánico. Se lo calmó con un vaso de agua."
     for i in range(14):
         app.hackeo._tecla(types.SimpleNamespace(keysym="a", char="a"))
@@ -138,8 +179,22 @@ def escanear():
         if len(esc.fotos) < 2:
             return app.after(200, listo)
         foto(esc, "escaner")
-        app.destroy()
+        esc.destroy()
+        app.after(100, markdown)
     app.after(200, listo)
+
+
+def markdown():
+    """Lector de Markdown con apuntes de una materia ficticia."""
+    f = tmp / "Apuntes de Análisis Matemático.md"
+    f.write_text(MD_EJEMPLO, encoding="utf-8")
+    app.abrir_markdown(str(f))
+    w = app._win_md
+    w.geometry("980x740+0+0")
+    w.v_buscar.set("límite")
+    w.buscar()
+    w.caja.yview_moveto(0)
+    app.after(600, lambda: (foto(w, "markdown"), app.destroy()))
 
 
 app.after(700, arranque)

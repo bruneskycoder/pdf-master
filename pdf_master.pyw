@@ -47,7 +47,7 @@ except Exception:
     _BaseTk = tk.Tk
     HAY_DND = False
 
-VERSION = "5.4"
+VERSION = "5.5"
 CONVERTIBLES = {".docx", ".doc", ".pptx", ".ppt"}
 EXT = CONVERTIBLES | {".pdf"}
 CONFIG = Path.home() / ".convertidor_word_pdf.json"
@@ -848,9 +848,38 @@ def op_img_pdf(c):
     return {"paginas": n}
 
 
+def op_md_pdf(c):
+    """HTML ya generado » PDF A4 con márgenes de 50 pt (pymupdf.Story). Sin imágenes."""
+    import io
+    css = ("body{font-size:11pt;color:#000000;background-color:#ffffff} "
+           "h1{font-size:20pt;margin-top:6pt} h2{font-size:16pt;margin-top:6pt} "
+           "h3,h4,h5,h6{font-size:13pt} p{margin-top:3pt;margin-bottom:5pt} "
+           "code{font-family:monospace;background-color:#eeeeee} "
+           "pre{font-family:monospace;font-size:9pt;background-color:#eeeeee;padding:4pt} "
+           "blockquote{margin-left:14pt;color:#444444} a{color:#000000} "
+           "table{border-collapse:collapse} th,td{border:1px solid #888888;padding:3pt}")
+    story = pymupdf.Story(html=c["html"], user_css=css)
+    buf = io.BytesIO()
+    escritor = pymupdf.DocumentWriter(buf)
+    hoja = pymupdf.paper_rect("a4")
+    caja = hoja + (50, 50, -50, -50)
+    mas, vueltas = 1, 0
+    while mas and vueltas < 3000:
+        dev = escritor.begin_page(hoja)
+        mas, _ = story.place(caja)
+        story.draw(dev)
+        escritor.end_page()
+        vueltas += 1
+    escritor.close()
+    doc = pymupdf.open("pdf", buf.getvalue())
+    n = len(doc)
+    guardar(doc, c["salida"], garbage=3, deflate=True)
+    return {"paginas": n}
+
+
 OPS = {"info": op_info, "merge": op_merge, "thumbs": op_thumbs, "delete": op_delete,
        "split": op_split, "compress": op_compress, "img_preparar": op_img_preparar,
-       "img_procesar": op_img_procesar, "img_pdf": op_img_pdf}
+       "img_procesar": op_img_procesar, "img_pdf": op_img_pdf, "md_pdf": op_md_pdf}
 
 if __name__ == "__main__":
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -1006,6 +1035,441 @@ def tam_legible(n):
 def limpiar_nombre(texto, defecto="Fusionado"):
     nombre = re.sub(r'[\\/:*?"<>|]', "_", (texto or "").strip()) or defecto
     return nombre[:-4] if nombre.lower().endswith(".pdf") else nombre
+
+
+# ------------------------------------------------------------- lector de Markdown
+# Parser propio y chico, sin dependencias. Dos pasos: texto » bloques » (segmentos para un
+# tk.Text, o HTML para imprimir). Nunca tira excepción: lo que no reconoce queda como texto.
+_MD_PUNTUACION = "\\`*_{}[]()#+-.!|>~<\"'&:;=@$%^/,?"
+_MD_ENLACE = re.compile(r'\[((?:[^\[\]\\]|\\.)+)\]\(\s*([^)\s]*)(?:\s+"[^"]*")?\s*\)')
+_MD_IMAGEN = re.compile(r'!\[((?:[^\[\]\\]|\\.)*)\]\(\s*[^)\s]*(?:\s+"[^"]*")?\s*\)')
+_MD_ENCABEZADO = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+_MD_HR = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+_MD_VALLA = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_MD_ITEM = re.compile(r"^([ \t]*)([-*+]|\d{1,9}[.)])[ \t]+(.*)$")
+_MD_TAREA = re.compile(r"^\[([ xX])\][ \t]+(.*)$")
+_MD_SEPARADOR = re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$")
+
+
+def _md_url_util(url):
+    """Devuelve la URL si se puede abrir (http/https o ruta relativa), si no, None."""
+    url = (url or "").strip()
+    if not url or url.startswith("#"):
+        return None
+    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]+):", url)
+    if m:
+        return url if m.group(1).lower() in ("http", "https") else None
+    return url
+
+
+def _md_inline(s, tags=()):
+    """Texto con marcas » lista de (texto, tags, url). Tags: b, i, code, link."""
+    out = []
+
+    def poner(txt, tg, url=None):
+        if not txt:
+            return
+        if out and out[-1][1] == tg and out[-1][2] == url:
+            out[-1] = (out[-1][0] + txt, tg, url)
+        else:
+            out.append((txt, tg, url))
+
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\" and i + 1 < n and s[i + 1] in _MD_PUNTUACION:
+            poner(s[i + 1], tags)
+            i += 2
+            continue
+        if c == "`":
+            k = 1
+            while i + k < n and s[i + k] == "`":
+                k += 1
+            cierre = s.find("`" * k, i + k)
+            if cierre > i + k - 1:
+                poner(s[i + k:cierre].strip() or s[i + k:cierre], tags + ("code",))
+                i = cierre + k
+                continue
+            poner("`" * k, tags)
+            i += k
+            continue
+        if c == "!":
+            m = _MD_IMAGEN.match(s, i)
+            if m:
+                alt = re.sub(r"\\(.)", r"\1", m.group(1)).strip()
+                poner("[imagen: %s]" % alt if alt else "[imagen]", tags)
+                i = m.end()
+                continue
+        if c == "[":
+            m = _MD_ENLACE.match(s, i)
+            if m:
+                url = _md_url_util(m.group(2))
+                if url:
+                    for t, tg, u in _md_inline(m.group(1), tags + ("link",)):
+                        poner(t, tg, url)
+                else:
+                    for t, tg, u in _md_inline(m.group(1), tags):
+                        poner(t, tg, u)
+                i = m.end()
+                continue
+        if c in "*_" and s.startswith(c * 3, i) and (c == "*" or i == 0 or not s[i - 1].isalnum()):
+            j = s.find(c * 3, i + 3)
+            if j > i + 3 and not s[i + 3].isspace():
+                for t, tg, u in _md_inline(s[i + 3:j], tags + ("b", "i")):
+                    poner(t, tg, u)
+                i = j + 3
+                continue
+        if c in "*_" and i + 1 < n:
+            doble = s[i + 1] == c
+            marca = c * (2 if doble else 1)
+            ini = i + len(marca)
+            antes_ok = c == "*" or i == 0 or not s[i - 1].isalnum()
+            if antes_ok and ini < n and not s[ini].isspace():
+                j = s.find(marca, ini)
+                while j != -1 and (s[j - 1].isspace() or (c == "_" and j + len(marca) < n
+                                                          and s[j + len(marca)].isalnum())):
+                    j = s.find(marca, j + 1)
+                if j > ini:
+                    extra = "b" if doble else "i"
+                    for t, tg, u in _md_inline(s[ini:j], tags + (extra,)):
+                        poner(t, tg, u)
+                    i = j + len(marca)
+                    continue
+        poner(c, tags)
+        i += 1
+    return out
+
+
+def _md_plano(s):
+    return "".join(t for t, _, _ in _md_inline(s))
+
+
+def _md_celdas(linea):
+    t = linea.strip()
+    if t.startswith("|"):
+        t = t[1:]
+    if t.endswith("|") and not t.endswith("\\|"):
+        t = t[:-1]
+    return [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", t)]
+
+
+def _md_bloques(texto):
+    """Texto » lista de bloques: ('h', n, txt) ('p', txt) ('code', lang, txt) ('quote', [txt])
+    ('li', nivel, ordenada, marca, tarea, txt) ('hr',) ('table', filas, alineaciones)."""
+    lineas = str(texto).replace("\r\n", "\n").replace("\r", "\n").replace("\t", "    ").split("\n")
+    bloques, par, pila = [], [], []
+    quote = None
+    i, n = 0, len(lineas)
+    hubo_blanco = True
+
+    def cerrar_par():
+        nonlocal par
+        if par:
+            bloques.append(("p", "\n".join(par)))
+            par = []
+
+    def cerrar_quote():
+        nonlocal quote
+        if quote is not None:
+            bloques.append(("quote", quote))
+            quote = None
+
+    while i < n:
+        linea = lineas[i]
+        if not linea.strip():
+            cerrar_par()
+            cerrar_quote()
+            hubo_blanco = True
+            i += 1
+            continue
+        m = _MD_VALLA.match(linea)
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            cerrar_par()
+            cerrar_quote()
+            valla = m.group(1)
+            sangria = len(linea) - len(linea.lstrip(" "))
+            cuerpo, i = [], i + 1
+            while i < n:
+                t = lineas[i].strip()
+                if t.startswith(valla[0] * len(valla)) and not t.strip(valla[0]):
+                    i += 1
+                    break
+                cuerpo.append(lineas[i][min(sangria, len(lineas[i]) - len(lineas[i].lstrip(" "))):])
+                i += 1
+            bloques.append(("code", m.group(2).strip(), "\n".join(cuerpo)))
+            pila, hubo_blanco = [], False
+            continue
+        ultimo = bloques[-1][0] if bloques else None
+        if linea.startswith("    ") and not par and quote is None and not _MD_ITEM.match(linea) \
+                and (hubo_blanco or ultimo not in ("li",)):
+            cerrar_quote()
+            cuerpo = []
+            while i < n and (lineas[i].startswith("    ") or not lineas[i].strip()):
+                cuerpo.append(lineas[i][4:])
+                i += 1
+            while cuerpo and not cuerpo[-1].strip():
+                cuerpo.pop()
+            bloques.append(("code", "", "\n".join(cuerpo)))
+            hubo_blanco = False
+            continue
+        hubo_blanco = False
+        m = _MD_ENCABEZADO.match(linea)
+        if m:
+            cerrar_par()
+            cerrar_quote()
+            bloques.append(("h", len(m.group(1)), (m.group(2) or "").strip()))
+            pila = []
+            i += 1
+            continue
+        if _MD_HR.match(linea):
+            cerrar_par()
+            cerrar_quote()
+            bloques.append(("hr",))
+            pila = []
+            i += 1
+            continue
+        if linea.lstrip().startswith(">"):
+            cerrar_par()
+            if quote is None:
+                quote = []
+            t = linea.lstrip()[1:]
+            quote.append(t[1:] if t.startswith(" ") else t)
+            i += 1
+            continue
+        if "|" in linea and i + 1 < n and "|" in lineas[i + 1] and _MD_SEPARADOR.match(lineas[i + 1]) \
+                and "-" in lineas[i + 1]:
+            cerrar_par()
+            cerrar_quote()
+            cab = _md_celdas(linea)
+            alin = []
+            for c in _md_celdas(lineas[i + 1]):
+                alin.append("c" if c.startswith(":") and c.endswith(":") and len(c) > 1 else
+                            "r" if c.endswith(":") else "l")
+            filas, i = [cab], i + 2
+            while i < n and lineas[i].strip() and "|" in lineas[i]:
+                filas.append(_md_celdas(lineas[i]))
+                i += 1
+            nc = len(cab)
+            filas = [(f + [""] * nc)[:nc] for f in filas]
+            bloques.append(("table", filas, (alin + ["l"] * nc)[:nc]))
+            pila = []
+            continue
+        m = _MD_ITEM.match(linea)
+        if m and not (m.group(2) in "*-+" and _MD_HR.match(linea)):
+            cerrar_par()
+            cerrar_quote()
+            ind = len(m.group(1))
+            while pila and pila[-1] > ind:
+                pila.pop()
+            if not pila or pila[-1] < ind:
+                pila.append(ind)
+            marca, cuerpo = m.group(2), m.group(3)
+            ordenada = marca[0].isdigit()
+            tarea = None
+            mt = _MD_TAREA.match(cuerpo)
+            if mt:
+                tarea, cuerpo = mt.group(1).lower() == "x", mt.group(2)
+            bloques.append(["li", len(pila) - 1, ordenada, marca if ordenada else "", tarea,
+                            cuerpo.strip()])
+            i += 1
+            continue
+        if quote is not None:
+            quote[-1] = quote[-1] + "\n" + linea.strip() if quote[-1].strip() else linea.strip()
+            i += 1
+            continue
+        if not par and bloques and bloques[-1][0] == "li" and linea.startswith(" "):
+            bloques[-1][5] += " " + linea.strip()  # continuación del ítem
+            i += 1
+            continue
+        if not par and bloques and bloques[-1][0] == "li" and ultimo == "li":
+            bloques[-1][5] += " " + linea.strip()  # continuación perezosa
+            i += 1
+            continue
+        pila = []
+        par.append(linea.strip() if not linea.endswith("  ") else linea.strip() + "  ")
+        i += 1
+    cerrar_par()
+    cerrar_quote()
+    return [tuple(b) for b in bloques]
+
+
+def _md_parrafo(txt):
+    """Une las líneas de un párrafo: salto suave » espacio; dos espacios o \\ al final » salto."""
+    partes = txt.split("\n")
+    out = partes[0]
+    for p in partes[1:]:
+        if out.endswith("  ") or out.endswith("\\"):
+            out = out.rstrip(" ").rstrip("\\") + "\n" + p
+        else:
+            out = out.rstrip() + " " + p
+    return out.rstrip()
+
+
+def _md_tabla_texto(filas, alin):
+    planas = [[_md_plano(c) for c in f] for f in filas]
+    anchos = [max(3, max(len(f[k]) for f in planas)) for k in range(len(alin))]
+
+    def celda(t, k):
+        return (t.rjust(anchos[k]) if alin[k] == "r" else t.center(anchos[k]) if alin[k] == "c"
+                else t.ljust(anchos[k]))
+    lineas = ["| " + " | ".join(celda(t, k) for k, t in enumerate(planas[0])) + " |",
+              "|" + "|".join("-" * (a + 2) for a in anchos) + "|"]
+    for f in planas[1:]:
+        lineas.append("| " + " | ".join(celda(t, k) for k, t in enumerate(f)) + " |")
+    return lineas
+
+
+def _md_tags(tg):
+    """Tags de un fragmento: negrita y cursiva juntas se vuelven 'bi'."""
+    if "b" in tg and "i" in tg:
+        tg = tuple(t for t in tg if t not in ("b", "i")) + ("bi",)
+    return tg
+
+
+def markdown_a_bloques(texto):
+    """Markdown » lista de segmentos (texto, tags) listos para un tk.Text. Los enlaces llevan
+    el tag 'link' y otro 'url:<destino>'. Nunca falla: lo desconocido sale como texto."""
+    try:
+        return _md_segmentos(texto)
+    except Exception:
+        return [(str(texto), ())]
+
+
+def _md_segmentos(texto):
+    seg = []
+
+    def inline(s, base=(), solo_enlaces=False):
+        for t, tg, url in _md_inline(s):
+            if solo_enlaces:
+                tg = tuple(x for x in tg if x == "link")
+            tg = _md_tags(tuple(base) + tg)
+            if url:
+                tg = tg + ("url:" + url,)
+            seg.append((t, tg))
+
+    bloques = _md_bloques(texto)
+    previo = None
+    for b in bloques:
+        tipo = b[0]
+        if previo is not None and not (tipo == "li" and previo == "li"):
+            seg.append(("\n", ()))
+        previo = tipo
+        if tipo == "h":
+            nombre = "h%d" % min(b[1], 3)
+            inline(b[2], (nombre,), solo_enlaces=True)
+            seg.append(("\n", (nombre,)))
+        elif tipo == "p":
+            inline(_md_parrafo(b[1]))
+            seg.append(("\n", ()))
+        elif tipo == "code":
+            for linea in (b[2].split("\n") if b[2] else [""]):
+                seg.append((linea + "\n", ("codeblock",)))
+        elif tipo == "quote":
+            for k, linea in enumerate(b[1]):
+                if not linea.strip():
+                    seg.append(("\n", ("quote",)))
+                    continue
+                for j, parte in enumerate(linea.split("\n")):
+                    inline(parte, ("quote",))
+                    seg.append(("\n", ("quote",)))
+        elif tipo == "li":
+            _, nivel, ordenada, marca, tarea, txt = b
+            etiqueta = marca + " " if ordenada else "• "
+            if tarea is not None:
+                etiqueta += "[x] " if tarea else "[ ] "
+            base = ("li", "nivel%d" % min(nivel, 6))
+            seg.append((etiqueta, base))
+            inline(txt, base)
+            seg.append(("\n", base))
+        elif tipo == "hr":
+            seg.append(("-" * 48 + "\n", ("hr",)))
+        elif tipo == "table":
+            for linea in _md_tabla_texto(b[1], b[2]):
+                seg.append((linea + "\n", ("tabla",)))
+    return seg
+
+
+def _html(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _md_inline_html(s):
+    out = []
+    for t, tg, url in _md_inline(s):
+        h = _html(t)
+        if "code" in tg:
+            h = "<code>%s</code>" % h
+        if "i" in tg:
+            h = "<i>%s</i>" % h
+        if "b" in tg:
+            h = "<b>%s</b>" % h
+        if "link" in tg and url and url.lower().startswith(("http://", "https://")):
+            h = '<a href="%s">%s</a>' % (_html(url), h)
+        out.append(h)
+    return "".join(out)
+
+
+def markdown_a_html(texto, titulo=""):
+    """Markdown » HTML simple (con todo escapado) para renderizar a PDF."""
+    try:
+        bloques = _md_bloques(texto)
+    except Exception:
+        bloques = [("p", str(texto))]
+    out = []
+    if titulo:
+        out.append("<!-- %s -->" % _html(titulo).replace("--", "- -"))
+    pila = []
+
+    def cerrar_listas(hasta=0):
+        while len(pila) > hasta:
+            out.append("</li></%s>" % pila.pop())
+    for b in bloques:
+        tipo = b[0]
+        if tipo != "li":
+            cerrar_listas()
+        if tipo == "h":
+            out.append("<h%d>%s</h%d>" % (b[1], _md_inline_html(b[2]), b[1]))
+        elif tipo == "p":
+            out.append("<p>%s</p>" % _md_inline_html(_md_parrafo(b[1])).replace("\n", "<br>"))
+        elif tipo == "code":
+            out.append("<pre><code>%s</code></pre>" % _html(b[2]))
+        elif tipo == "quote":
+            out.append("<blockquote>%s</blockquote>" % "<br>".join(
+                _md_inline_html(l) if l.strip() else "<br>" for l in b[1]))
+        elif tipo == "li":
+            _, nivel, ordenada, marca, tarea, txt = b
+            lista = "ol" if ordenada else "ul"
+            nivel = min(nivel, 8)
+            if len(pila) > nivel + 1:
+                cerrar_listas(nivel + 1)
+            if len(pila) == nivel + 1:
+                out.append("</li>")
+                if pila[-1] != lista:
+                    out.append("</%s>" % pila.pop())
+            while len(pila) < nivel + 1:
+                pila.append(lista)
+                out.append("<%s>" % lista)
+            caja = "" if tarea is None else ("[x] " if tarea else "[ ] ")
+            out.append("<li>%s%s" % (caja, _md_inline_html(txt)))
+        elif tipo == "hr":
+            out.append("<hr>")
+        elif tipo == "table":
+            filas, alin = b[1], b[2]
+            lado = {"l": "left", "r": "right", "c": "center"}
+            html = ["<table>"]
+            for k, f in enumerate(filas):
+                celda = "th" if k == 0 else "td"
+                html.append("<tr>%s</tr>" % "".join(
+                    '<%s style="text-align:%s">%s</%s>' % (celda, lado[alin[j]], _md_inline_html(c), celda)
+                    for j, c in enumerate(f)))
+            html.append("</table>")
+            out.append("".join(html))
+    cerrar_listas()
+    return "\n".join(out)
+
+
+def contar_palabras(texto):
+    return sum(1 for p in str(texto).split() if any(c.isalnum() for c in p))
 
 
 # --------------------------------------------------------------------- PDFsam
@@ -1906,6 +2370,318 @@ class Escaner(tk.Toplevel):
             shutil.rmtree(self.tmp, ignore_errors=True)
 
 
+class LectorMD(tk.Toplevel):
+    """Lector de Markdown: abre un .md, lo muestra con formato, busca y lo exporta a PDF.
+    No carga imágenes ni ejecuta nada del archivo: solo texto."""
+
+    TAM_BASE, TAM_MIN, TAM_MAX = 11, 8, 26
+    MAX_BYTES = 8 * 1024 * 1024
+    EXT = (".md", ".markdown")
+
+    def __init__(self, app, ruta=None):
+        super().__init__(app)
+        self.app = app
+        self.title("Lector de Markdown")
+        self.geometry("980x740")
+        self.minsize(640, 460)
+        self.configure(background=BG)
+        barra_oscura(self)
+        self.ruta = None
+        self.texto = ""
+        self.tam = self.TAM_BASE
+        self.cola = queue.Queue()
+        self.exportando = False
+        self.hallazgos = []   # rangos (inicio, fin) de las coincidencias
+        self.actual = -1
+        self.ultimo_buscado = ""
+        self.v_nombre = tk.StringVar(value="(ningún archivo)")
+        self.v_buscar = tk.StringVar()
+        self.v_estado = tk.StringVar(value="Abrí un archivo .md para leerlo.")
+        self._armar()
+        self._fuentes()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.after(100, self._sondear)
+        if ruta:
+            self.cargar(ruta)
+
+    # ------------------------------------------------------------------ armado
+    def _armar(self):
+        cont = ttk.Frame(self, padding=(22, 14, 22, 12))
+        cont.pack(fill="both", expand=True)
+        ttk.Label(cont, text="LECTOR DE MARKDOWN", style="Title.TLabel").pack(anchor="w")
+        pie = ttk.Frame(cont)
+        pie.pack(side="bottom", fill="x", pady=(8, 0))
+        ttk.Label(pie, textvariable=self.v_estado, style="Muted.TLabel", wraplength=860,
+                  justify="left").pack(side="left", anchor="w")
+        self.btn_pdf = ttk.Button(pie, text="[ EXPORTAR A PDF ]", style="Accent.TButton",
+                                  command=self.exportar)
+        self.btn_pdf.pack(side="right")
+        arriba = ttk.Frame(cont)
+        arriba.pack(fill="x", pady=(6, 8))
+        ttk.Button(arriba, text="[ ABRIR… ]", style="Accent.TButton", command=self.abrir_dialogo
+                   ).pack(side="left")
+        ttk.Button(arriba, text="[Recargar]", style="Link.TButton", command=self.recargar
+                   ).pack(side="left", padx=(12, 0))
+        ttk.Label(arriba, textvariable=self.v_nombre, style="Muted.TLabel"
+                  ).pack(side="left", padx=(14, 0))
+        for texto, paso in (("[A+]", 1), ("[A-]", -1)):
+            ttk.Button(arriba, text=texto, style="Link.TButton",
+                       command=lambda p=paso: self.cambiar_tam(p)).pack(side="right", padx=(8, 0))
+        ttk.Button(arriba, text="[Buscar]", style="Link.TButton", command=self.buscar
+                   ).pack(side="right", padx=(8, 0))
+        self.campo = ttk.Entry(arriba, textvariable=self.v_buscar, width=22)
+        self.campo.pack(side="right")
+        self.campo.bind("<Return>", lambda e: self.buscar())
+
+        marco = tk.Frame(cont, background=LINEA, padx=1, pady=1)
+        marco.pack(fill="both", expand=True)
+        sy = ttk.Scrollbar(marco)
+        sy.pack(side="right", fill="y")
+        sx = ttk.Scrollbar(marco, orient="horizontal")
+        sx.pack(side="bottom", fill="x")
+        self.caja = tk.Text(marco, wrap="word", state="disabled", relief="flat", borderwidth=0,
+                            highlightthickness=0, background=PANEL, foreground=FG,
+                            insertbackground=ACENTO, selectbackground=ACENTO_OSC,
+                            selectforeground=ACENTO, padx=26, pady=18, cursor="arrow",
+                            yscrollcommand=sy.set, xscrollcommand=sx.set,
+                            font=(self.app.fam, self.TAM_BASE))
+        self.caja.pack(side="left", fill="both", expand=True)
+        sy.config(command=self.caja.yview)
+        sx.config(command=self.caja.xview)
+
+    def _fuentes(self):
+        """Crea (o reajusta) las fuentes y los tags según el tamaño actual."""
+        import tkinter.font as tkfont
+        esc = self.tam / self.TAM_BASE
+        mono, tit = self.app.fam, self.app.fam_titulo
+        if not hasattr(self, "f"):
+            self.f = {}
+        defs = {"base": (mono, self.tam, "normal", "roman"),
+                "b": (mono, self.tam, "bold", "roman"),
+                "i": (mono, self.tam, "normal", "italic"),
+                "bi": (mono, self.tam, "bold", "italic"),
+                "code": (mono, max(self.tam - 1, 7), "normal", "roman"),
+                "h1": (tit, round(30 * esc), "normal", "roman"),
+                "h2": (tit, round(24 * esc), "normal", "roman"),
+                "h3": (tit, round(20 * esc), "normal", "roman")}
+        for nombre, (fam, tam, peso, inclinacion) in defs.items():
+            if nombre in self.f:
+                self.f[nombre].configure(family=fam, size=tam, weight=peso, slant=inclinacion)
+            else:
+                self.f[nombre] = tkfont.Font(root=self, family=fam, size=tam, weight=peso,
+                                             slant=inclinacion)
+        t = self.caja
+        t.configure(font=self.f["base"])
+        t.tag_configure("h1", font=self.f["h1"], foreground=ACENTO, spacing1=10, spacing3=8)
+        t.tag_configure("h2", font=self.f["h2"], foreground=ACENTO, spacing1=8, spacing3=6)
+        t.tag_configure("h3", font=self.f["h3"], foreground=ACENTO, spacing1=6, spacing3=4)
+        t.tag_configure("b", font=self.f["b"], foreground=ACENTO2)
+        t.tag_configure("i", font=self.f["i"], foreground=GRIS)
+        t.tag_configure("bi", font=self.f["bi"], foreground=ACENTO2)
+        t.tag_configure("code", font=self.f["code"], foreground=GRIS, background=PANEL2)
+        t.tag_configure("codeblock", font=self.f["code"], foreground=GRIS, background=PANEL2,
+                        lmargin1=14, lmargin2=14, wrap="none")
+        t.tag_configure("tabla", font=self.f["code"], foreground=FG, background=PANEL2,
+                        lmargin1=14, lmargin2=14, wrap="none")
+        t.tag_configure("quote", foreground=TENUE, lmargin1=28, lmargin2=28)
+        t.tag_configure("li", spacing1=2)
+        for nivel in range(7):
+            t.tag_configure("nivel%d" % nivel, lmargin1=10 + 22 * nivel, lmargin2=30 + 22 * nivel)
+        t.tag_configure("hr", foreground=LINEA, wrap="none")
+        t.tag_configure("link", foreground=VERDE, underline=True)
+        t.tag_configure("hallazgo", background=AMBAR, foreground=TINTA)
+        t.tag_configure("actual", background=ACENTO, foreground=TINTA)
+        t.tag_raise("hallazgo")
+        t.tag_raise("actual")
+        t.tag_bind("link", "<Enter>", lambda e: t.configure(cursor="hand2"))
+        t.tag_bind("link", "<Leave>", lambda e: t.configure(cursor="arrow"))
+        t.tag_bind("link", "<Button-1>", self._clic)
+
+    # ------------------------------------------------------------------- cargar
+    def abrir_dialogo(self):
+        ruta = filedialog.askopenfilename(
+            parent=self, title="Elegí un archivo Markdown",
+            initialdir=str(self.ruta.parent if self.ruta else
+                           (self.app.base or self.app.cfg.get("carpeta") or Path.home())),
+            filetypes=[("Markdown", "*.md *.markdown"), ("Todos los archivos", "*.*")])
+        if ruta:
+            self.cargar(ruta)
+
+    def recargar(self):
+        if self.ruta:
+            self.cargar(self.ruta, avisar=False)
+        else:
+            self.v_estado.set("Todavía no hay ningún archivo abierto.")
+
+    def _leer(self, ruta):
+        """(texto, codificación). UTF-8 y, si no sirve, cp1252 (Word y el Bloc de notas viejo)."""
+        crudo = Path(ruta).read_bytes()
+        if len(crudo) > self.MAX_BYTES:
+            raise ValueError("el archivo pesa más de 8 MB: es demasiado para el lector")
+        try:
+            return crudo.decode("utf-8-sig"), "UTF-8"
+        except UnicodeDecodeError:
+            return crudo.decode("cp1252", errors="replace"), "cp1252 (Windows)"
+
+    def cargar(self, ruta, avisar=True):
+        ruta = Path(ruta)
+        try:
+            texto, cod = self._leer(ruta)
+        except (OSError, ValueError) as e:
+            messagebox.showerror("No se pudo abrir el archivo", f"{ruta.name}: {e}", parent=self)
+            self.v_estado.set("No se pudo abrir el archivo.")
+            return False
+        self.ruta, self.texto = ruta, texto
+        self.v_nombre.set(ruta.name)
+        self.title(f"Lector de Markdown — {ruta.name}")
+        self._pintar()
+        palabras, lineas = contar_palabras(texto), len(texto.splitlines())
+        self.v_estado.set(f"Leído como {cod} · {palabras} palabra(s) · {lineas} línea(s)")
+        if avisar:
+            self.app.decir_accion("markdown", nombre=ruta.name, n=palabras)
+        return True
+
+    def _pintar(self):
+        t = self.caja
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        self.hallazgos, self.actual, self.ultimo_buscado = [], -1, ""
+        for tag in t.tag_names():
+            if tag.startswith("url:"):
+                t.tag_delete(tag)
+        for texto, tags in markdown_a_bloques(self.texto):
+            t.insert("end", texto, tags)
+        t.configure(state="disabled")
+        t.yview_moveto(0)
+
+    # ------------------------------------------------------------------- enlaces
+    def _clic(self, evento):
+        t = self.caja
+        for tag in t.tag_names(f"@{evento.x},{evento.y}"):
+            if tag.startswith("url:"):
+                self.abrir_enlace(tag[4:])
+                return "break"
+
+    def abrir_enlace(self, url):
+        if url.lower().startswith(("http://", "https://")):
+            webbrowser.open(url)
+            self.v_estado.set(f"Se abrió el enlace en el navegador: {url[:80]}")
+            return
+        from urllib.parse import unquote
+        rel = unquote(url.split("#")[0])
+        destino = (self.ruta.parent / rel) if self.ruta else Path(rel)
+        if destino.suffix.lower() not in self.EXT + (".txt",):
+            self.v_estado.set("Ese enlace no es otro Markdown: no lo abro desde acá.")
+        elif not destino.is_file():
+            self.v_estado.set(f"No encuentro el archivo enlazado: {rel}")
+        else:
+            self.cargar(destino)
+
+    # -------------------------------------------------------------------- buscar
+    def buscar(self):
+        t = self.caja
+        q = self.v_buscar.get()
+        if not q:
+            self._limpiar_busqueda()
+            self.v_estado.set("Escribí algo para buscar.")
+            return
+        if q != self.ultimo_buscado:
+            self._limpiar_busqueda()
+            self.ultimo_buscado = q
+            pos = "1.0"
+            while True:
+                ini = t.search(q, pos, stopindex="end", nocase=True)
+                if not ini:
+                    break
+                fin = f"{ini}+{len(q)}c"
+                t.tag_add("hallazgo", ini, fin)
+                self.hallazgos.append((ini, fin))
+                pos = fin
+            self.actual = -1
+        if not self.hallazgos:
+            self.v_estado.set(f"Sin coincidencias de «{q}».")
+            return
+        if self.actual >= 0:
+            t.tag_remove("actual", "1.0", "end")
+        self.actual = (self.actual + 1) % len(self.hallazgos)
+        ini, fin = self.hallazgos[self.actual]
+        t.tag_add("actual", ini, fin)
+        t.see(ini)
+        self.v_estado.set(f"Coincidencia {self.actual + 1} de {len(self.hallazgos)} para «{q}».")
+
+    def _limpiar_busqueda(self):
+        self.caja.tag_remove("hallazgo", "1.0", "end")
+        self.caja.tag_remove("actual", "1.0", "end")
+        self.hallazgos, self.actual, self.ultimo_buscado = [], -1, ""
+
+    # ------------------------------------------------------------------- tamaño
+    def cambiar_tam(self, paso):
+        nuevo = min(self.TAM_MAX, max(self.TAM_MIN, self.tam + paso))
+        if nuevo != self.tam:
+            self.tam = nuevo
+            self._fuentes()
+        self.v_estado.set(f"Tamaño de letra: {self.tam}.")
+
+    # --------------------------------------------------------------- exportar PDF
+    def exportar(self):
+        if self.exportando:
+            return
+        if not self.ruta:
+            messagebox.showinfo("Sin archivo", "Primero abrí un Markdown.", parent=self)
+            return
+        destino = filedialog.asksaveasfilename(
+            parent=self, title="Dónde guardar el PDF", defaultextension=".pdf",
+            initialdir=str(self.ruta.parent), initialfile=self.ruta.stem + ".pdf",
+            filetypes=[("PDF", "*.pdf")])
+        if not destino:
+            return
+        destino = Path(destino)
+        if destino.suffix.lower() != ".pdf":
+            destino = destino.with_name(destino.name + ".pdf")
+        html = markdown_a_html(self.texto, self.ruta.name)
+        self.exportando = True
+        self.btn_pdf.config(state="disabled")
+        self.v_estado.set("Armando el PDF…")
+        emit = lambda t, d: self.cola.put(("estado", d)) if t == "log" else None
+
+        def trabajo():
+            try:
+                r = pdf_op({"op": "md_pdf", "html": html, "salida": str(destino)}, emit)
+            except Exception as e:
+                r = {"error": str(e)}
+            self.cola.put(("listo", (destino, r)))
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    def _sondear(self):
+        try:
+            if not self.winfo_exists():
+                return
+            while True:
+                tipo, dato = self.cola.get_nowait()
+                if tipo == "estado":
+                    self.v_estado.set(str(dato).strip()[:200])
+                elif tipo == "listo":
+                    destino, r = dato
+                    self.exportando = False
+                    self.btn_pdf.config(state="normal")
+                    if r.get("error") == "no_pymupdf":
+                        messagebox.showwarning("Falta un componente", AYUDA_PYMUPDF, parent=self)
+                        self.v_estado.set("No se pudo crear el PDF.")
+                    elif "error" in r:
+                        messagebox.showerror("No se pudo crear el PDF", r["error"], parent=self)
+                        self.v_estado.set("No se pudo crear el PDF.")
+                    else:
+                        self.v_estado.set(f"Listo: {destino.name}, {r.get('paginas', '?')} "
+                                          f"página(s). Está en {destino.parent}.")
+                        if self.app.v_abrir.get():
+                            self.app._abrir(destino)
+        except queue.Empty:
+            pass
+        except tk.TclError:
+            return
+        self.after(100, self._sondear)
+
+
 # ------------------------------------------------------------------------- GUI
 # Pantalla de fósforo verde. Verde fuerte (y entre corchetes) = lo que se toca; verde suave =
 # información; verde pálido = lo importante; ámbar = advertencia; rojo = error.
@@ -2193,6 +2969,10 @@ class Guion:
         "escaner": ("Listo: se escanearon {n} foto(s) y se armó el PDF.", (
             "SE ESCANEARON {n} FOTO(S). EL DEPARTAMENTO DE FOTOCOPIAS SE SIENTE AMENAZADO.",
             "SE DIGITALIZARON {n} FOTO(S). LOS ORIGINALES NO FUERON TOCADOS.")),
+        "markdown": ("Se abrió «{nombre}»: {n} palabra(s).", (
+            "SE ABRIÓ «{nombre}»: {n} PALABRAS. EL DEPARTAMENTO DE LECTURA RÁPIDA YA SE CANSÓ.",
+            "EXPEDIENTE «{nombre}» EN LECTURA: {n} PALABRAS CONTADAS UNA POR UNA.",
+            "SE LEYÓ «{nombre}» ({n} PALABRAS). NO SE ENCONTRÓ LA MORALEJA.")),
         "curioso": (None, (
             "SE DETECTÓ CURIOSIDAD NO AUTORIZADA. SE INICIÓ UN EXPEDIENTE. RESPUESTA "
             "ESTIMADA: 30 A 45 DÍAS HÁBILES.",)),
@@ -2816,9 +3596,11 @@ for i, exp in enumerate(expedientes, 1):
 
 
 class Hackeo:
-    """Paso previo a convertir, con efectos completos: simulador de hacker. Cualquier tecla
-    escribe código ficticio; Enter arranca la conversión real; Esc vuelve sin convertir.
-    El «nivel de hackeo» es decorado: el progreso real empieza recién al convertir."""
+    """Página del modo intrusión, con efectos completos: simulador de hacker que se abre encima
+    de la conversión real, que ya arrancó. Cualquier tecla escribe código ficticio; Esc (o el
+    botón) sale sin cancelar nada; al terminar la conversión, Enter cierra la página.
+    El «nivel de hackeo» es decorado (ámbar); el «PROGRESO REAL» sale de la barra y del estado
+    verdaderos de la aplicación (verde pálido)."""
 
     CARACTERES_POR_TECLA = 4
     PALABRAS = {"def", "return", "for", "in", "while", "not", "import", "from", "as", "try",
@@ -2828,9 +3610,9 @@ class Hackeo:
     IGNORAR = {"Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R", "Caps_Lock",
                "Super_L", "Super_R", "Win_L", "Win_R", "Num_Lock", "ISO_Level3_Shift", "Tab"}
 
-    def __init__(self, app, archivos, destino, al_confirmar):
-        self.app, self.al_confirmar = app, al_confirmar
-        self.vivo, self.teclas, self.confirmado = True, 0, False
+    def __init__(self, app, archivos, destino):
+        self.app = app
+        self.vivo, self.teclas, self.terminado = True, 0, False
         self.codigo = codigo_de_intrusion(archivos, destino, app.azar)
         self.pos = 0
         self.pendiente = None  # línea roja que espera al fin de la línea de código
@@ -2840,6 +3622,16 @@ class Hackeo:
         enc = self.enc = tk.Canvas(f, height=96, background=BG, highlightthickness=0)
         enc.pack(fill="x", padx=26, pady=(14, 6))
         enc.bind("<Configure>", lambda e: self._dibujar_encabezado(len(archivos), destino))
+        # progreso real: bien separado del decorado y en verde pálido
+        real = tk.Frame(f, background=PANEL, highlightbackground=VERDE, highlightthickness=1)
+        real.pack(fill="x", padx=26, pady=(0, 10))
+        tk.Label(real, text="PROGRESO REAL", background=PANEL, foreground=VERDE,
+                 font=(app.fam, 10, "bold")).pack(anchor="w", padx=12, pady=(6, 2))
+        self.barra = BarraSegmentada(real, fuente=(app.fam, 9))
+        self.barra.pack(fill="x", padx=12)
+        self.v_real = tk.StringVar()
+        tk.Label(real, textvariable=self.v_real, background=PANEL, foreground=VERDE,
+                 font=(app.fam, 10), anchor="w", justify="left").pack(fill="x", padx=12, pady=(2, 6))
         # código
         cuerpo = tk.Frame(f, background=LINEA, padx=1, pady=1)
         cuerpo.pack(fill="both", expand=True, padx=26)
@@ -2851,21 +3643,35 @@ class Hackeo:
                            ("ok", VERDE), ("err", ROJO), ("cursor", ACENTO)):
             self.txt.tag_configure(tag, foreground=color)
         self.txt.tag_configure("cursor", background=ACENTO)
-        self.txt.insert("end", "Tipeá cualquier cosa: el sistema escribe por vos. ENTER inicia la "
-                               "conversión real. ESC vuelve.\n\n", "com")
+        self.txt.insert("end", "La conversión real ya está en marcha. Mientras tanto, tipeá lo que "
+                               "quieras: el sistema escribe por vos. ESC sale sin cancelar la "
+                               "conversión.\n\n", "com")
         self.txt.insert("end", " ", "cursor")
         self.txt.configure(state="disabled")
         # pie
         pie = ttk.Frame(f)
         pie.pack(fill="x", padx=26, pady=(8, 16))
-        self.btn_sin = ttk.Button(pie, text="[ CONVERTIR SIN HACKEAR ]", command=self._confirmar)
-        self.btn_sin.pack(side="right")
-        ttk.Button(pie, text="[Volver]", style="Link.TButton", command=self.cerrar).pack(side="right", padx=8)
+        self.btn_salir = ttk.Button(pie, text="[ SALIR DEL MODO INTRUSIÓN ]", command=self.cerrar)
+        self.btn_salir.pack(side="right")
         self.v_pie = tk.StringVar(value="ESPERANDO QUE EL OPERADOR DEMUESTRE QUE SABE ESCRIBIR…")
         ttk.Label(pie, textvariable=self.v_pie, style="Muted.TLabel").pack(side="left")
         self._tecla_id = app.bind("<Key>", self._tecla, add="+")
         self.txt.bind("<Button-1>", lambda e: "break")
         f.focus_set()
+        self._tick()
+
+    def _tick(self):
+        """Copia el progreso real de la aplicación (barra y estado), cada 250 ms."""
+        if not self.vivo:
+            return
+        try:
+            m, v = self.app.barra.cget("maximum"), self.app.barra.cget("value")
+            self.barra.config(maximum=m, value=v)
+            estado = self.app.v_status.get()
+            self.v_real.set(f"{int(v)} de {int(m)} · {estado}" if estado else f"{int(v)} de {int(m)}")
+            self.f.after(250, self._tick)
+        except tk.TclError:
+            pass
 
     # ---------------------------------------------------------------- dibujo
     def _dibujar_encabezado(self, n, destino):
@@ -2879,7 +3685,7 @@ class Hackeo:
         c.create_text(20, 64, anchor="w", fill=VERDE, font=(app.fam, 9),
                       text=f"OBJETIVO REAL: {n} EXPEDIENTE(S) · DESTINO: {App._corta(destino, 60)}")
         c.create_text(20, 82, anchor="w", fill=TENUE, font=(app.fam, 9),
-                      text="Nada de esto hackea nada: es decorado. La conversión real empieza con ENTER.")
+                      text="Nada de esto hackea nada: es decorado. La conversión real ya está en marcha.")
         c.create_text(a - 20, 30, anchor="e", fill=AMBAR, font=(app.fam, 10, "bold"),
                       tags="nivel", text="NIVEL DE HACKEO: 0 %")
         self.segs = []
@@ -2895,7 +3701,7 @@ class Hackeo:
         n = self.nivel()
         try:
             self.enc.itemconfigure("nivel", text=f"NIVEL DE HACKEO: {n} %" +
-                                   ("  · LISTO PARA ENTER" if n >= 100 else ""))
+                                   ("  · AL MÁXIMO (DECORADO)" if n >= 100 else ""))
             for i, s in enumerate(self.segs):
                 self.enc.itemconfigure(s, fill=AMBAR if i < n // 5 else PANEL2)
         except (tk.TclError, AttributeError):
@@ -2903,10 +3709,13 @@ class Hackeo:
 
     # ---------------------------------------------------------------- teclado
     def _tecla(self, e):
-        if not self.vivo or self.confirmado:
+        if not self.vivo:
             return
         if e.keysym in ("Return", "KP_Enter"):
-            self._confirmar()
+            if self.terminado:
+                self.cerrar()
+            else:
+                self._linea("TODAVÍA NO TERMINÓ. HACKEE CON MÁS GANAS.", "num")
             return "break"
         if e.keysym == "Escape":
             self.cerrar()
@@ -2960,11 +3769,11 @@ class Hackeo:
         if linea.startswith("[ OK ]"):
             marcar("ok", 0, len(linea))
 
-    def _linea_roja(self, texto):
+    def _linea(self, texto, tag="err"):
         t = self.txt
         t.configure(state="normal")
         t.delete("cursor.first", "cursor.last")
-        t.insert("end-1c", "\n" + texto + "\n", "err")
+        t.insert("end-1c", "\n" + texto + "\n", tag)
         t.insert("end-1c", " ", "cursor")
         t.see("end")
         t.configure(state="disabled")
@@ -2995,7 +3804,8 @@ class Hackeo:
         elif paso == 1:
             self.cartel.configure(text="  ACCESO CONCEDIDO  ", foreground=ACENTO,
                                   highlightbackground=ACENTO)
-            self.v_pie.set("SE REINTENTÓ CON LA MISMA CLAVE. ESTA VEZ FUNCIONÓ. NADIE SABE POR QUÉ.")
+            if not self.terminado:
+                self.v_pie.set("SE REINTENTÓ CON LA MISMA CLAVE. ESTA VEZ FUNCIONÓ. NADIE SABE POR QUÉ.")
             self.f.after(600, self._denegado, 2)
         else:
             try:
@@ -3004,21 +3814,28 @@ class Hackeo:
                 pass
 
     # ---------------------------------------------------------------- salida
-    def _confirmar(self):
-        if not self.vivo or self.confirmado:
+    def terminar(self, seg, con_error):
+        """Llegó el fin de la conversión real: se avisa en el código (con el tiempo verdadero) y
+        la página espera un Enter. No se cierra sola."""
+        if not self.vivo or self.terminado:
             return
-        self.confirmado = True
-        self._linea_roja("")
-        t = self.txt
-        t.configure(state="normal")
-        t.insert("end-1c", "\n>>> INTRUSIÓN COMPLETADA (MÁS O MENOS). INICIANDO CONVERSIÓN REAL…\n", "ok")
-        t.see("end")
-        t.configure(state="disabled")
-        self.f.after(450, self._salir_y_convertir)
+        self.terminado = True
+        self._tick_ahora()
+        if con_error:
+            self._linea(">>> LA CONVERSIÓN TERMINÓ CON ERRORES: TE ABRÍ EL REGISTRO. ENTER PARA SALIR.", "err")
+            self.v_pie.set("LA CONVERSIÓN REAL TERMINÓ CON ERRORES. ENTER PARA SALIR.")
+        else:
+            self._linea(f">>> CONVERSIÓN REAL TERMINADA EN {seg} S. ENTER PARA SALIR.", "ok")
+            self.v_pie.set("LA CONVERSIÓN REAL TERMINÓ. ENTER PARA SALIR.")
 
-    def _salir_y_convertir(self):
-        self.cerrar()
-        self.al_confirmar()
+    def _tick_ahora(self):
+        try:
+            m, v = self.app.barra.cget("maximum"), self.app.barra.cget("value")
+            self.barra.config(maximum=m, value=v)
+            estado = self.app.v_status.get()
+            self.v_real.set(f"{int(v)} de {int(m)} · {estado}" if estado else f"{int(v)} de {int(m)}")
+        except tk.TclError:
+            pass
 
     def cerrar(self):
         if not self.vivo:
@@ -3032,8 +3849,12 @@ class Hackeo:
             self.f.destroy()
         except tk.TclError:
             pass
-        if self.app.hackeo is self:
-            self.app.hackeo = None
+        app = self.app
+        if app.hackeo is self:
+            app.hackeo = None
+        # salir no cancela nada: si la conversión sigue, vuelve la pantalla de trabajo de siempre
+        if app.trabajando and app.efectos == "completos" and not app.teatro:
+            app.teatro = Teatro(app, app.medio)
 
 
 class Teatro:
@@ -3308,7 +4129,7 @@ class App(_BaseTk):
         self.expediente = ""
         self.reglas = list(self.cfg.get("reglas", []))
         self.herr_pdfs = []
-        self._win_herr = self._win_auto = self._win_esc = None
+        self._win_herr = self._win_auto = self._win_esc = self._win_md = None
 
         v = lambda k, d: self.cfg.get(k, d)
         modo_prev = v("salida_modo", "subcarpeta" if v("subcarpeta", False) else "junto")
@@ -3474,6 +4295,7 @@ class App(_BaseTk):
         mas.add_command(label="  Herramientas PDF (dividir, comprimir, eliminar páginas)…  ",
                         command=self.abrir_herramientas)
         mas.add_command(label="  Escanear fotos a PDF (como CamScanner)…", command=self.abrir_escaner)
+        mas.add_command(label="  Abrir un Markdown (.md)…", command=self.abrir_markdown)
         mas.add_command(label="  Carpetas automáticas…", command=self.abrir_auto)
         mas.add_separator()
         mas.add_command(label="  Enviar los PDF a PDFsam…", command=self.enviar_pdfsam)
@@ -3688,6 +4510,19 @@ class App(_BaseTk):
             w.lift()
             return
         self._win_esc = Escaner(self)
+
+    def abrir_markdown(self, ruta=None):
+        """Abre el lector (uno solo), con el archivo dado o preguntando cuál."""
+        w = self._win_md
+        if w is None or not w.winfo_exists():
+            w = self._win_md = LectorMD(self)
+        else:
+            w.deiconify()
+        w.lift()
+        if ruta:
+            w.cargar(ruta)
+        else:
+            w.abrir_dialogo()
 
     def abrir_auto(self):
         self._ventana("_win_auto", "Carpetas automáticas", self._tab_auto, "820x640")
@@ -3910,6 +4745,13 @@ class App(_BaseTk):
             self.agregar_rutas(rutas, reemplazar=not agregar)
 
     def agregar_rutas(self, rutas, reemplazar=False):
+        rutas = list(rutas)
+        mds = [r for r in rutas if Path(str(r)).suffix.lower() in LectorMD.EXT]
+        if mds:  # los Markdown se leen, no se convierten: van al lector y no a la lista
+            rutas = [r for r in rutas if r not in mds]
+            self.abrir_markdown(mds[0])
+            if not rutas:
+                return
         nuevos = filtrar_archivos(rutas)
         if not nuevos:
             messagebox.showinfo("Sin archivos válidos",
@@ -4103,14 +4945,15 @@ class App(_BaseTk):
         self.antes_de_convertir(elegidos, arrancar)
 
     def antes_de_convertir(self, elegidos, arrancar):
-        """Con efectos completos, el paso del simulador de hacker; si no, directo."""
+        """Arranca la conversión real y, con efectos completos, abre encima el modo intrusión."""
         if self.efectos != "completos":
             return arrancar()
         if self.hackeo:
             self.hackeo.cerrar()
         destino = self.v_destino.get().splitlines()[0] if self.v_destino.get() else ""
         destino = destino.replace("Se guardan en: ", "")
-        self.hackeo = Hackeo(self, elegidos, destino, arrancar)
+        self.hackeo = Hackeo(self, elegidos, destino)
+        arrancar()  # la conversión real arranca ya; el modo intrusión va encima
 
     def _guardar_cfg(self):
         self.cfg.update({
@@ -4139,7 +4982,7 @@ class App(_BaseTk):
         self.expediente = f"Nº {self.azar.randint(1000, 9999)}/{datetime.now().year}"
         self.decir_accion("inicio", exp=self.expediente,
                           n=next((len(x) for x in args if isinstance(x, (list, tuple))), 1))
-        if self.efectos == "completos":  # menú MÁS… » Efectos visuales
+        if self.efectos == "completos" and not self.hackeo:  # con el modo intrusión abierto, el teatro espera
             self.teatro = Teatro(self, self.medio)
         self.barra.config(maximum=1, value=0)
         emit = lambda t, d: self.cola.put((t, d))
@@ -4202,6 +5045,8 @@ class App(_BaseTk):
                     seg = f"{time.time() - getattr(self, 'inicio_trabajo', time.time()):.1f}"
                     self.decir_accion("fin_error" if self.hubo_error else "fin",
                                       exp=self.expediente, seg=seg.replace(".", ","))
+                    if self.hackeo:
+                        self.hackeo.terminar(seg.replace(".", ","), self.hubo_error)
                     self._estado_lo()
                     self._pedir_paginas()
         except queue.Empty:
