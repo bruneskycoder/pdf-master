@@ -114,7 +114,19 @@ def principal():
     app.guion.mazos["ATAQUES"] = [("SE DETECTÓ UN HACKER EN LA RED. PIDE QUE LE CONVIERTAN UN "
                                    "TRABAJO PRÁCTICO.", "SE LE ASIGNÓ TURNO PARA MARZO.")]
     app.ataque()
-    app.after(420, lambda: (foto(app, "ataque"), app.after(2600, hackear)))
+    app.after(420, lambda: (foto(app, "ataque"), app.after(2600, doctor)))
+
+
+def doctor():
+    """El Dr. Fósforo: su línea DR.FÓSFORO> y el globo (se fuerzan para la captura)."""
+    d = app.doctor
+    d.callar()
+    d.saludado = True
+    d.ultima_voz = d.ultimo_globo = -1e9
+    app.decir("Eso no fue un virus: fui yo calibrando la antena con una cuchara.", doctor=True)
+    d.globo(["La Dirección dice que soy", "«personal no autorizado».", "Yo digo que soy personal",
+             "luminoso."], urgente=True)
+    app.after(2300, lambda: (foto(app, "doctor"), d.callar(), app.after(300, hackear)))
 
 
 def hackear():
