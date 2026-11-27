@@ -353,33 +353,88 @@ def test_hackeo_cualquier_tecla_escribe_codigo(app, pm, tmp_path):
     texto = h.txt.get("1.0", "end")
     assert len(texto) > len(antes) + 1500
     assert "TP 1 - Introducción.docx" in texto  # los nombres reales aparecen en el código
-    assert h.nivel() == 100 and not llamadas
+    assert h.nivel() == 100 and llamadas == [1]
     assert h.txt.tag_ranges("kw") and h.txt.tag_ranges("str")  # hay colores
 
 
-def test_hackeo_enter_arranca_la_conversion_real(app, pm, tmp_path):
+def test_hackeo_la_conversion_real_arranca_al_abrir(app, pm, tmp_path):
     llamadas = []
     h = _hackeo(app, pm, tmp_path, llamadas)
+    assert llamadas == [1] and app.hackeo is h  # arrancó una sola vez, con la página abierta
     h._tecla(_evento("x", "x"))
+    _esperar(app, lambda: False, 0.5)
+    assert llamadas == [1]
+
+
+def test_hackeo_enter_antes_de_terminar_no_cierra_ni_reconvierte(app, pm, tmp_path):
+    llamadas = []
+    h = _hackeo(app, pm, tmp_path, llamadas)
     h._tecla(_evento("Return"))
-    h._tecla(_evento("Return"))  # un segundo Enter no convierte dos veces
-    assert _esperar(app, lambda: llamadas == [1], 3)
+    h._tecla(_evento("Return"))
+    _esperar(app, lambda: False, 0.6)
+    assert app.hackeo is h and h.vivo and llamadas == [1]
+    assert "TODAVÍA NO TERMINÓ" in h.txt.get("1.0", "end")
+
+
+def test_hackeo_fin_exitoso_espera_enter(app, pm, tmp_path):
+    h = _hackeo(app, pm, tmp_path, [])
+    h.terminar("3,4", False)
+    texto = h.txt.get("1.0", "end")
+    assert ">>> CONVERSIÓN REAL TERMINADA EN 3,4 S. ENTER PARA SALIR." in texto
+    assert "TERMINÓ. ENTER PARA SALIR" in h.v_pie.get()
+    _esperar(app, lambda: False, 0.5)
+    assert app.hackeo is h  # no se cierra sola
+    h._tecla(_evento("Return"))
     assert app.hackeo is None
 
 
-def test_hackeo_esc_vuelve_sin_convertir(app, pm, tmp_path):
+def test_hackeo_fin_con_errores_en_rojo(app, pm, tmp_path):
+    h = _hackeo(app, pm, tmp_path, [])
+    h.terminar("1,0", True)
+    texto = h.txt.get("1.0", "end")
+    assert ">>> LA CONVERSIÓN TERMINÓ CON ERRORES: TE ABRÍ EL REGISTRO. ENTER PARA SALIR." in texto
+    rojas = "".join(h.txt.get(a, b) for a, b in zip(*[iter(h.txt.tag_ranges("err"))] * 2))
+    assert "CON ERRORES" in rojas
+    h._tecla(_evento("KP_Enter"))
+    assert app.hackeo is None
+
+
+def test_hackeo_esc_sale_sin_cancelar_y_crea_el_teatro(app, pm, tmp_path):
     llamadas = []
     h = _hackeo(app, pm, tmp_path, llamadas)
+    assert app.teatro is None
+    app.trabajando = True  # la conversión sigue en marcha
     h._tecla(_evento("Escape"))
-    _esperar(app, lambda: False, 0.6)
-    assert llamadas == [] and app.hackeo is None
+    assert app.hackeo is None and llamadas == [1]
+    assert app.trabajando and app.teatro is not None
+    app.teatro.cerrar()
+    app.trabajando = False
 
 
-def test_hackeo_tiene_salida_sin_jugar(app, pm, tmp_path):
-    llamadas = []
-    h = _hackeo(app, pm, tmp_path, llamadas)
-    h.btn_sin.invoke()
-    assert _esperar(app, lambda: llamadas == [1], 3)
+def test_hackeo_salir_sin_conversion_en_marcha_no_crea_teatro(app, pm, tmp_path):
+    h = _hackeo(app, pm, tmp_path, [])
+    h.btn_salir.invoke()
+    assert app.hackeo is None and app.teatro is None
+
+
+def test_hackeo_progreso_real_refleja_la_barra(app, pm, tmp_path):
+    h = _hackeo(app, pm, tmp_path, [])
+    app.barra.config(maximum=5, value=2)
+    app.v_status.set("OK  TP 2 - Señales.docx")
+    assert _esperar(app, lambda: "2 de 5" in h.v_real.get(), 3)
+    assert "TP 2 - Señales.docx" in h.v_real.get()
+    assert (h.barra.cget("maximum"), h.barra.cget("value")) == (5, 2)
+    app.barra.config(value=4)
+    assert _esperar(app, lambda: "4 de 5" in h.v_real.get(), 3)
+
+
+def test_hackeo_el_teatro_no_se_crea_con_la_pagina_abierta(app, pm, tmp_path):
+    h = _hackeo(app, pm, tmp_path, [])
+    app._iniciar(lambda emit: emit("fin", "Listo."), ())
+    assert app.teatro is None and app.hackeo is h
+    assert _esperar(app, lambda: not app.trabajando, 3)
+    assert _esperar(app, lambda: h.terminado, 3)
+    assert app.hackeo is h  # el fin no cierra la página
 
 
 def test_hackeo_denegado_y_fallas_no_rompen(app, pm, tmp_path):
@@ -413,9 +468,9 @@ def test_convertir_pasa_por_el_simulador(app, pm, tmp_path, monkeypatch):
     app.agregar_rutas([str(tmp_path / "a.pdf"), str(tmp_path / "b.pdf")])
     app.v_fusionar.set(True)
     app.convertir()
-    assert app.hackeo is not None and not llamadas
-    app.hackeo._tecla(_evento("Return"))
-    assert _esperar(app, lambda: len(llamadas) == 1, 3)
+    assert app.hackeo is not None and len(llamadas) == 1  # la conversión real ya arrancó
+    app.hackeo._tecla(_evento("Return"))  # Enter antes de terminar no reconvierte
+    assert len(llamadas) == 1
 
 
 def test_falla_de_pantalla_se_resuelve(app):

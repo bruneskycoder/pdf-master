@@ -12,6 +12,7 @@ Convertí tus Word y PowerPoint a PDF de a muchos por vez y, si querés, unilos 
 - **Une** todo en un solo PDF. Puede agregar una página en blanco después de cada documento con páginas impares, para que al imprimir doble faz cada trabajo empiece en una hoja nueva. También puede numerar las páginas con un pie.
 - **Elige qué páginas usar** de cada archivo al unir (doble clic en la columna «Páginas a usar»).
 - **Escanea fotos a PDF** (`MÁS… » Escanear fotos a PDF`), como CamScanner pero en tu PC: detecta la hoja en cada foto, te deja ajustar las cuatro esquinas, la endereza, la limpia (aclarar, blanco y negro o gris) y arma un PDF en A4 o del tamaño de la foto. Las fotos no salen de tu computadora.
+- **Lee archivos Markdown** (`MÁS… » Abrir un Markdown`, o arrastrando un `.md`): los muestra con formato, busca texto, cambia el tamaño de letra y los exporta a PDF para imprimir. No carga imágenes ni ejecuta nada.
 - **Guarda los PDF** donde digas: junto al original, en una subcarpeta «PDF» o en otra carpeta. Antes de convertir te muestra dónde van a quedar.
 - En el botón **MÁS…**: dividir, comprimir y eliminar páginas (con miniaturas); carpetas automáticas que procesan solas lo que les pongas; enviar los PDF a PDFsam.
 
@@ -22,7 +23,7 @@ PDF Master se ve como una terminal de fósforo verde de 1987, de una dependencia
 - **Al abrirlo** hace una secuencia de arranque y te pide un PIN de operador. Abajo, en rojo, te dice cuál es: «LO SABEMOS PORQUE EL SISTEMA ESTÁ HACKEADO DESDE 1994». Cualquier respuesta entra.
 - **La línea `SIS>`** comenta cada cosa que hacés («MESA DE ENTRADAS: 3 EXPEDIENTES RECIBIDOS. SE LABRÓ ACTA.»).
 - **Cada tanto, un ataque falso:** la pantalla destella en rojo, el encabezado se corrompe y aparece una alarma («UN VIRUS INTENTA CONVERTIR SUS PDF EN WORD»). Dos segundos después se resuelve sola («BLOQUEADO. ACÁ SE CONVIERTE EN UN SOLO SENTIDO.»).
-- **Antes de convertir, el «MODO INTRUSIÓN»:** un simulador de hacker. Apretás cualquier tecla y la pantalla escribe código sofisticado (C, Python, assembler y SQL de la burocracia, con los nombres reales de tus archivos adentro), con «ACCESO DENEGADO», *kernel panics* y la pantalla fallando. **Enter** arranca la conversión de verdad, **Esc** vuelve, y `[ CONVERTIR SIN HACKEAR ]` es para quien no quiera jugar. El «nivel de hackeo» es decorado; el progreso real empieza recién al convertir.
+- **Al tocar convertir, el «MODO INTRUSIÓN»:** la conversión real arranca en el acto y, encima, se abre un simulador de hacker. Apretás cualquier tecla y la pantalla escribe código sofisticado (C, Python, assembler y SQL de la burocracia, con los nombres reales de tus archivos adentro), con «ACCESO DENEGADO», *kernel panics* y la pantalla fallando. Un bloque verde aparte, **PROGRESO REAL**, muestra el avance verdadero; el «nivel de hackeo» en ámbar es decorado. **Esc** o `[ SALIR DEL MODO INTRUSIÓN ]` salen sin cancelar nada (la conversión sigue con su pantalla de trabajo); al terminar, la página avisa con el tiempo real y **Enter** la cierra.
 - **Mientras convierte,** la pantalla se llena de lluvia de caracteres y subprocesos solemnes que no hacen nada («[PROC 0720] FINGIENDO QUE TODO ESTO ES NECESARIO»), con alguna falla roja que se recupera en el acto.
 - **La pantalla está al borde de la falla:** desgarros horizontales, pérdida de sincronía vertical y apagones de una fracción de segundo, cada uno con su comentario («SE GOLPEÓ EL MONITOR. SEÑAL RECUPERADA.»). Nunca más de tres destellos por segundo, por las personas fotosensibles.
 - **En Windows,** un vidrio de monitor viejo cubre toda la ventana: líneas de barrido, un reflejo diagonal, la barra clara que baja lenta, y un marco con las esquinas curvas casi negras. Son dos capas que no reciben clics: se trabaja igual que sin ellas.
@@ -35,11 +36,13 @@ Es sátira, y está hecha para no confundir:
 - **El PIN no es una clave:** no se guarda ni se envía. No escribas ahí ninguna contraseña tuya.
 - **Siempre arranca con todo encendido,** y se puede bajar el volumen en `MÁS… » Efectos visuales`: *Completos*, *Reducidos* (sin movimiento, la sátira queda quieta) o *Apagados* (modo serio: sin sátira, sin animación y sin capa de vidrio). La elección queda guardada. `Esc` saltea el arranque y oculta la animación del momento.
 
-Atajos: `Ctrl+O` agrega archivos, `Ctrl+Enter` convierte (pasa por el modo intrusión), `Esc` oculta los efectos o sale del modo intrusión sin convertir.
+Atajos: `Ctrl+O` agrega archivos, `Ctrl+Enter` convierte (con efectos completos abre el modo intrusión), `Esc` oculta los efectos o sale del modo intrusión sin cancelar la conversión.
 
 | PIN de operador | Modo intrusión | Mientras convierte |
 |---|---|---|
 | ![PIN de operador](docs/capturas/pin_respuesta.png) | ![Simulador de hacker](docs/capturas/hackeo.png) | ![Pantalla de trabajo](docs/capturas/trabajando.png) |
+
+El lector de Markdown: [docs/capturas/markdown.png](docs/capturas/markdown.png).
 
 ## Cómo usarlo
 

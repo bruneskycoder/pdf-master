@@ -2,6 +2,23 @@
 
 Formato: versión, qué cambia para quien lo usa y, aparte, lo técnico.
 
+## 5.5 — 2026-11-27
+
+**Para quien lo usa**
+
+- **Lector de Markdown** (`MÁS… » Abrir un Markdown (.md)`). También se abre solo si agregás o arrastrás un `.md` a la ventana principal (no entra a la lista de conversión). Muestra títulos, listas, tareas, tablas, citas, código, enlaces y negrita o cursiva con la estética de la terminal. Tiene `[Buscar]` (Enter salta a la siguiente coincidencia), `[A-]` y `[A+]`, `[Recargar]` y una línea con las palabras y líneas reales del archivo.
+- Los enlaces `http(s)` se abren en el navegador; los que apuntan a otro `.md` se abren en el mismo lector. Las imágenes no se cargan: se muestra `[imagen: descripción]`.
+- `[ EXPORTAR A PDF ]` arma un PDF A4 para imprimir (fondo blanco, texto negro) y respeta «Abrir el resultado al terminar».
+- Se lee como UTF-8 y, si no sirve, como cp1252 (Windows); el pie dice cuál se usó.
+- **Modo intrusión:** ahora la conversión real arranca en el acto y el simulador se abre encima. Un bloque verde aparte, «PROGRESO REAL», muestra el avance verdadero; el «nivel de hackeo» sigue siendo decorado. Esc o `[ SALIR DEL MODO INTRUSIÓN ]` salen sin cancelar nada. Al terminar, la página avisa con el tiempo real (o con los errores, en rojo) y Enter la cierra.
+
+**Técnico**
+
+- Parser propio sin dependencias: `markdown_a_bloques` (segmentos para un `tk.Text`) y `markdown_a_html` (con escape), sobre los mismos bloques. Ninguna entrada tira excepción.
+- Operación `md_pdf` en el worker PDF: `pymupdf.Story` + `DocumentWriter`, márgenes de 50 pt, guardado con `.part`.
+- Clase `LectorMD` y acción `markdown` en `Guion` (con versión llana para el modo apagado).
+- `Hackeo` ya no recibe callback: `antes_de_convertir` lo abre y arranca la conversión; no se crea `Teatro` mientras la página está abierta y se crea al salir si la conversión sigue.
+
 ## 5.4 — 2026-11-27
 
 **Para quien lo usa**
