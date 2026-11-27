@@ -2,6 +2,23 @@
 
 Formato: versión, qué cambia para quien lo usa y, aparte, lo técnico.
 
+## 5.7 — 2026-11-27
+
+**Para quien lo usa**
+
+- **El escáner detecta mejor la hoja.** Ya no se confunde si la parte de arriba está en sombra, si la hoja toca el borde de la foto, si está girada o en perspectiva, o si el fondo tiene textura. Si no logra distinguir la hoja, lo avisa en la línea de estado y toma la foto entera.
+- **Sin restos de mesa en los bordes**: las esquinas se ajustan al borde real de la hoja con precisión de menos de un píxel y se recorta un margen mínimo, así el resultado no trae la línea oscura que a veces quedaba arriba o a la izquierda.
+- **Endereza solo**: después de corregir la perspectiva, gira el documento hasta que los renglones quedan horizontales (hasta 8 grados) y recorta el borde sobrante. Si no hay texto suficiente, no gira.
+- **«Aclarar» se parece más a CamScanner**: papel blanco parejo aunque haya sombra fuerte, tinta bien negra y los sellos de color (azul, violeta, rojo) siguen siendo de color.
+- **`[ CREAR PDF ]` abre «OPCIONES DEL PDF»**: tamaño (A4, Carta, Oficio / Legal o el de la foto), orientación (automática, vertical u horizontal), márgenes (sin margen o 1 cm), rango de fotos (todas o por ejemplo `1-3,5`, validado contra la cantidad de fotos), marca de agua de texto en diagonal (gris y translúcida, `COPIA` por defecto), calidad (Alta, Media o Liviana) y «Enderezar automáticamente». `[ GUARDAR PDF ]` pide dónde guardar. Se recuerdan las últimas opciones (claves `esc_*` de la configuración; el rango no se recuerda). La elección de tamaño de página que estaba abajo en la ventana del escáner pasó al diálogo.
+
+**Técnico**
+
+- `detectar_hoja_info(im)` devuelve `(esquinas, metodo, puntaje)` con método `"bordes"` (Sobel + Hough en Python puro, dos familias de líneas casi horizontales y casi verticales, combinaciones 2+2 de los mejores picos, el borde de la imagen cuenta como lado), `"mascara"` (brillo relativo al entorno, Otsu, componente más grande, huecos rellenos, envolvente convexa y mejor cuadrilátero) o `"completa"`. `detectar_hoja` sigue devolviendo solo las esquinas; `op_img_preparar` agrega `"metodo"` a cada foto. En una foto de 4000x3000 la detección tarda unos 0,3 s.
+- `estimar_inclinacion` / `enderezar_imagen` (perfil de proyección, -8 a +8 grados, afinado de a 0,1); `op_img_procesar` acepta `enderezar` (por defecto verdadero), `lado_max` y `calidad`, y devuelve `angulo`. En blanco y negro el umbral se aplica después de girar.
+- `op_img_pdf` acepta `tamano`, `orientacion`, `margen_cm` y `marca` (la clave vieja `pagina` sigue sirviendo). La marca usa la fuente incrustada con Unicode, como el pie.
+- Clase `OpcionesPDF` y función `rango_paginas`. Imágenes sintéticas compartidas por las pruebas y las capturas en `tests/sinteticas.py` (nada de fotos reales). Capturas: `escaner.png` nueva y `escaner_opciones.png`.
+
 ## 5.6 — 2026-11-27
 
 **Para quien lo usa**

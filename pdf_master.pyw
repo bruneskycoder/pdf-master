@@ -72,7 +72,7 @@ except Exception:
     _BaseTk = tk.Tk
     HAY_DND = False
 
-VERSION = "5.6"
+VERSION = "5.7"
 CONVERTIBLES = {".docx", ".doc", ".pptx", ".ppt"}
 EXT = CONVERTIBLES | {".pdf"}
 CONFIG = Path.home() / ".convertidor_word_pdf.json"
@@ -691,49 +691,419 @@ def _area(p):
     return abs(sum(p[i][0] * p[(i + 1) % 4][1] - p[(i + 1) % 4][0] * p[i][1] for i in range(4))) / 2
 
 
-def detectar_hoja(im):
-    """Esquinas [sup-izq, sup-der, inf-der, inf-izq] de la hoja clara sobre fondo más oscuro,
-    en coordenadas de la imagen. Si no se distingue una hoja, devuelve la imagen completa."""
-    Image, _, ImageFilter, _ = _pil()
+def _bordes(g):
+    """Gradiente de Sobel de una imagen gris chica: (magnitud, gx, gy) como bytes. gx y gy
+    llevan 128 de desplazamiento. Los píxeles del borde de la imagen quedan en 0."""
+    Image, ImageChops, ImageFilter, _ = _pil()
+    w, h = g.size
+    # Pillow no siempre aplica el núcleo con la orientación que uno espera: se comprueba con una
+    # rampa (más claro hacia abajo) para que gy sea positivo cuando la imagen aclara hacia abajo.
+    ky = [-1, -2, -1, 0, 0, 0, 1, 2, 1]
+    rampa = Image.new("L", (5, 5))
+    rampa.putdata([40 * (i // 5) for i in range(25)])
+    if rampa.filter(ImageFilter.Kernel((3, 3), ky, 8, 128)).getpixel((2, 2)) < 128:
+        ky = [-v for v in ky]
+    gx = g.filter(ImageFilter.Kernel((3, 3), [-1, 0, 1, -2, 0, 2, -1, 0, 1], 8, 128))
+    gy = g.filter(ImageFilter.Kernel((3, 3), ky, 8, 128))
+    ab = [abs(i - 128) for i in range(256)]
+    m = ImageChops.add(gx.point(ab), gy.point(ab)).tobytes()
+    m = bytearray(m)
+    m[:w] = bytes(w)
+    m[(h - 1) * w:] = bytes(w)
+    for y in range(h):
+        m[y * w] = 0
+        m[y * w + w - 1] = 0
+    return bytes(m), gx.tobytes(), gy.tobytes()
+
+
+def _umbral_borde(m, w, h):
+    """Umbral de borde: una fracción del borde más fuerte (percentil 99,5), no un porcentaje
+    fijo de píxeles, para que el texto de la hoja no tape el contorno."""
+    hm = [0] * 256
+    for v in m:
+        hm[v] += 1
+    objetivo, acum, p995 = 0.005 * w * h, 0, 255
+    for v in range(255, 0, -1):
+        acum += hm[v]
+        if acum >= objetivo:
+            p995 = v
+            break
+    return max(int(0.2 * p995), 8)
+
+
+def _hough(m, gxb, gyb, w, h, thr):
+    """Líneas candidatas (cos, sen, rho, votos) en dos familias: casi verticales y casi
+    horizontales (±35 grados). Coordenadas centradas en la imagen."""
+    import math
+    cx, cy = w / 2.0, h / 2.0
+    cs = {t: (math.cos(math.radians(t)), math.sin(math.radians(t))) for t in range(-90, 181)}
+    acc_v, acc_h = {}, {}
+    n = w * h
+    for i in range(n):
+        v = m[i]
+        if v < thr:
+            continue
+        gx, gy = gxb[i] - 128, gyb[i] - 128
+        a = math.degrees(math.atan2(gy, gx)) % 180.0
+        x, y = i % w - cx, i // w - cy
+        a1 = a - 180.0 if a > 90 else a
+        c1 = int(round(a1))
+        for t in range(max(-35, c1 - 10), min(35, c1 + 10) + 1):
+            co, si = cs[t]
+            k = t * 4096 + int(round((x * co + y * si) / 2.0))
+            acc_v[k] = acc_v.get(k, 0) + v
+        c2 = int(round(a))
+        for t in range(max(55, c2 - 10), min(125, c2 + 10) + 1):
+            co, si = cs[t]
+            k = t * 4096 + int(round((x * co + y * si) / 2.0))
+            acc_h[k] = acc_h.get(k, 0) + v
+    out = []
+    for acc in (acc_v, acc_h):
+        elegidos = []
+        for k, v in sorted(acc.items(), key=lambda kv: -kv[1])[:400]:
+            t, rb = (k + 2048) // 4096, (k + 2048) % 4096 - 2048
+            if any(abs(t - t2) <= 6 and abs(rb - r2) <= 4 for t2, r2, _ in elegidos):
+                continue
+            elegidos.append((t, rb, v))
+            if len(elegidos) == 6:
+                break
+        out.append([(cs[t][0], cs[t][1], rb * 2.0, v, False) for t, rb, v in elegidos])
+    return out[0], out[1]
+
+
+def _cruce(l1, l2):
+    det = l1[0] * l2[1] - l2[0] * l1[1]
+    if abs(det) < 1e-6:
+        return None
+    return ((l1[2] * l2[1] - l2[2] * l1[1]) / det, (l1[0] * l2[2] - l2[0] * l1[2]) / det)
+
+
+def _cuadrilatero_ok(p, w, h, amin=0.25):
+    """Convexo, con ángulos de 60 a 120 grados y de 25 % a 100 % de la imagen."""
+    import math
+    if not amin <= _area(p) / float(w * h) <= 1.0001:
+        return False
+    signo = 0
+    for i in range(4):
+        a, b, c = p[i], p[(i + 1) % 4], p[(i + 2) % 4]
+        ux, uy, vx, vy = a[0] - b[0], a[1] - b[1], c[0] - b[0], c[1] - b[1]
+        lu, lv = math.hypot(ux, uy), math.hypot(vx, vy)
+        if lu < 1 or lv < 1:
+            return False
+        cruz = ux * vy - uy * vx
+        if signo == 0:
+            signo = 1 if cruz > 0 else -1
+        elif cruz * signo <= 0:
+            return False
+        ang = math.degrees(math.acos(max(-1.0, min(1.0, (ux * vx + uy * vy) / (lu * lv)))))
+        if not 60 <= ang <= 120:
+            return False
+    return True
+
+
+def _en_borde(a, b, w, h, e=2.5):
+    return ((a[0] <= e and b[0] <= e) or (a[0] >= w - e and b[0] >= w - e)
+            or (a[1] <= e and b[1] <= e) or (a[1] >= h - e and b[1] >= h - e))
+
+
+def _puntaje(p, m, thr, w, h, g):
+    """Promedio, a lo largo de los 4 lados, de la magnitud de gradiente (relativa al umbral de
+    borde) multiplicada por el contraste entre el lado de adentro y el de afuera: un renglón de
+    texto tiene gradiente fuerte pero papel a ambos lados, el borde de la hoja no. Un lado pegado
+    al borde de la imagen no se mide: vale un valor neutro. Devuelve (puntaje, lados_medidos) o
+    None si algún lado medido casi no tiene borde."""
+    import math
+    total, medidos = 0.0, 0
+    for i in range(4):
+        a, b = p[i], p[(i + 1) % 4]
+        if _en_borde(a, b, w, h):
+            total += 0.5
+            continue
+        medidos += 1
+        largo = math.hypot(b[0] - a[0], b[1] - a[1])
+        nx, ny = (b[1] - a[1]) / largo, -(b[0] - a[0]) / largo
+        pasos = max(4, int(largo / 3))
+        s = dentro = fuera = 0.0
+        n_c = 0
+        for j in range(pasos + 1):
+            px, py = a[0] + (b[0] - a[0]) * j / pasos, a[1] + (b[1] - a[1]) * j / pasos
+            mejor = 0
+            for o in (-2, -1, 0, 1, 2):
+                xi, yi = int(round(px + nx * o)), int(round(py + ny * o))
+                if 0 <= xi < w and 0 <= yi < h:
+                    v = m[yi * w + xi]
+                    if v > mejor:
+                        mejor = v
+            s += min(mejor / float(thr), 1.5)
+            x1, y1 = int(round(px + nx * 6)), int(round(py + ny * 6))
+            x2, y2 = int(round(px - nx * 6)), int(round(py - ny * 6))
+            if 0 <= x1 < w and 0 <= y1 < h and 0 <= x2 < w and 0 <= y2 < h:
+                dentro += g[y1 * w + x1]
+                fuera += g[y2 * w + x2]
+                n_c += 1
+        s /= pasos + 1
+        if n_c:
+            s *= min(1.0, abs(dentro - fuera) / n_c / 25.0)
+        if s < 0.3:
+            return None
+        total += s
+    if medidos < 2:
+        return None
+    return total / 4.0, medidos
+
+
+def _candidatos_bordes(m, gxb, gyb, w, h, thr):
+    from itertools import combinations
+    V, H = _hough(m, gxb, gyb, w, h, thr)
+    cx, cy = w / 2.0, h / 2.0
+    vmax = max([l[3] for l in V + H] or [1])
+    V = V + [(1.0, 0.0, -cx, vmax * 0.35, True), (1.0, 0.0, cx, vmax * 0.35, True)]
+    H = H + [(0.0, 1.0, -cy, vmax * 0.35, True), (0.0, 1.0, cy, vmax * 0.35, True)]
+    tol = 0.06 * max(w, h)
+    lista = []
+    for h1, h2 in combinations(H, 2):
+        arriba, abajo = sorted((h1, h2), key=lambda l: l[2] / l[1])
+        for v1, v2 in combinations(V, 2):
+            izq, der = sorted((v1, v2), key=lambda l: l[2] / l[0])
+            q = []
+            for hl, vl in ((arriba, izq), (arriba, der), (abajo, der), (abajo, izq)):
+                c = _cruce(hl, vl)
+                if c is None:
+                    break
+                x, y = c[0] + cx, c[1] + cy
+                if not (-tol <= x <= w + tol and -tol <= y <= h + tol):
+                    break
+                q.append((min(max(x, 0.0), w), min(max(y, 0.0), h)))
+            if len(q) < 4 or not _cuadrilatero_ok(q, w, h):
+                continue
+            pre = sum(l[3] for l in (h1, h2, v1, v2)) / vmax
+            lista.append((pre * (0.5 + _area(q) / (w * h)), q))
+    lista.sort(key=lambda t: -t[0])
+    return [q for _, q in lista[:60]]
+
+
+def _casco(puntos):
+    """Envolvente convexa (monotone chain)."""
+    pts = sorted(set(puntos))
+    if len(pts) < 3:
+        return pts
+
+    def cruz(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    inf = []
+    for p in pts:
+        while len(inf) >= 2 and cruz(inf[-2], inf[-1], p) <= 0:
+            inf.pop()
+        inf.append(p)
+    sup = []
+    for p in reversed(pts):
+        while len(sup) >= 2 and cruz(sup[-2], sup[-1], p) <= 0:
+            sup.pop()
+        sup.append(p)
+    return inf[:-1] + sup[:-1]
+
+
+def _mejor_cuadrilatero(casco):
+    """Cuadrilátero de mayor área con vértices de la envolvente: se parte de los extremos en 8
+    direcciones y se mejora moviendo cada vértice a lo largo del casco."""
+    from itertools import combinations
+    n = len(casco)
+    if n < 4:
+        return None
+    idx = set()
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+        idx.add(max(range(n), key=lambda i: casco[i][0] * dx + casco[i][1] * dy))
+    if len(idx) < 4:
+        idx |= set(range(0, n, max(1, n // 4)))
+    quad = lambda ii: [casco[i] for i in ii]
+    mejor = max((c for c in combinations(sorted(idx), 4)), key=lambda c: _area(quad(c)))
+    mejor = list(mejor)
+    for _ in range(12):
+        cambio = False
+        for j in range(4):
+            a, b = mejor[(j - 1) % 4], mejor[(j + 1) % 4]
+            i = (a + 1) % n
+            while i != b:
+                prueba = mejor[:]
+                prueba[j] = i
+                if _area(quad(prueba)) > _area(quad(mejor)) + 1e-9:
+                    mejor, cambio = prueba, True
+                i = (i + 1) % n
+        if not cambio:
+            break
+    q = quad(mejor)
+    # orden: sup-izq, sup-der, inf-der, inf-izq (sentido horario en pantalla)
+    s = sum(q[i][0] * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * q[i][1] for i in range(4))
+    if s < 0:
+        q = q[::-1]
+    k = min(range(4), key=lambda i: q[i][0] + q[i][1])
+    return q[k:] + q[:k]
+
+
+def _candidato_mascara(g, w, h):
+    """Máscara de la hoja: brillo relativo al entorno (se normaliza la iluminación), umbral de
+    Otsu, componente más grande, huecos rellenos y mejor cuadrilátero de su envolvente."""
+    import math
+    Image, ImageChops, ImageFilter, _ = _pil()
+    esc = math.log(256)
+    log = [round(255 * math.log(1 + i) / esc) for i in range(256)]
+    fondo = g.filter(ImageFilter.GaussianBlur(max(w, h) / 8.0))
+    rel = ImageChops.subtract(g.point(log), fondo.point(log), 1.0, 128)
+    t = umbral_otsu(rel.histogram())
+    datos = bytearray(rel.point([0] * (t + 1) + [1] * (255 - t)).tobytes())
+    # componente conexa más grande (4 vecinos)
+    etiqueta = bytearray(w * h)
+    mejor, mejor_n = None, 0
+    for s in range(w * h):
+        if datos[s] != 1 or etiqueta[s]:
+            continue
+        pila, comp = [s], [s]
+        etiqueta[s] = 1
+        while pila:
+            i = pila.pop()
+            x = i % w
+            for j in (i - 1 if x else -1, i + 1 if x < w - 1 else -1, i - w, i + w):
+                if 0 <= j < w * h and datos[j] == 1 and not etiqueta[j]:
+                    etiqueta[j] = 1
+                    pila.append(j)
+                    comp.append(j)
+        if len(comp) > mejor_n:
+            mejor, mejor_n = comp, len(comp)
+    if mejor is None or mejor_n < 0.1 * w * h:
+        return None
+    blob = bytearray(w * h)
+    for i in mejor:
+        blob[i] = 1
+    # huecos: lo que no se alcanza desde el borde yendo por el fondo
+    fuera = bytearray(w * h)
+    pila = [i for i in range(w * h) if (i % w in (0, w - 1) or i < w or i >= (h - 1) * w) and not blob[i]]
+    for i in pila:
+        fuera[i] = 1
+    while pila:
+        i = pila.pop()
+        x = i % w
+        for j in (i - 1 if x else -1, i + 1 if x < w - 1 else -1, i - w, i + w):
+            if 0 <= j < w * h and not blob[j] and not fuera[j]:
+                fuera[j] = 1
+                pila.append(j)
+    pts = []
+    for y in range(h):
+        fila = blob[y * w:(y + 1) * w]
+        a = next((x for x in range(w) if fila[x]), None)
+        if a is None:
+            continue
+        b = w - 1 - next(x for x in range(w) if fila[w - 1 - x])
+        pts.append((a, y))
+        pts.append((b + 1, y + 1))
+        pts.append((a, y + 1))
+        pts.append((b + 1, y))
+    q = _mejor_cuadrilatero(_casco(pts))
+    if q is None:
+        return None
+    q = [(min(max(float(x), 0.0), w), min(max(float(y), 0.0), h)) for x, y in q]
+    return q if _cuadrilatero_ok(q, w, h) else None
+
+
+def _afinar(q, m, w, h):
+    """Ajusta cada lado que no es el borde de la imagen (desplazamiento de a 0,4 px y giro de a
+    0,5 grados, bilineal sobre el gradiente) para que caiga justo sobre el borde, y vuelve a
+    cruzar los lados. El acumulador de Hough tiene 2 px de grano y eso, en la foto grande, son
+    varios píxeles de mesa dentro del recorte."""
+    import math
+
+    def muestra(x, y):
+        if not 0 <= x < w - 1 or not 0 <= y < h - 1:
+            return 0.0
+        x0, y0 = int(x), int(y)
+        fx, fy = x - x0, y - y0
+        i = y0 * w + x0
+        return ((m[i] * (1 - fx) + m[i + 1] * fx) * (1 - fy)
+                + (m[i + w] * (1 - fx) + m[i + w + 1] * fx) * fy)
+    lineas = []
+    for i in range(4):
+        a, b = q[i], q[(i + 1) % 4]
+        largo = math.hypot(b[0] - a[0], b[1] - a[1])
+        ux, uy = (b[0] - a[0]) / largo, (b[1] - a[1]) / largo
+        mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        mejor = (a, (ux, uy), 0)
+        if not _en_borde(a, b, w, h):
+            n = max(4, int(largo * 0.9 / 2))
+            mejor_p = -1.0
+            for t in range(-3, 4):
+                ang = math.radians(t * 0.5)
+                c, sn = math.cos(ang), math.sin(ang)
+                vx, vy = ux * c - uy * sn, ux * sn + uy * c
+                for k in range(-8, 9):
+                    d = k * 0.4
+                    ox, oy = mx - uy * d, my + ux * d
+                    p = sum(muestra(ox + vx * (j - n / 2.0) * largo * 0.9 / n,
+                                    oy + vy * (j - n / 2.0) * largo * 0.9 / n)
+                            for j in range(n + 1)) - 0.5 * (abs(d) + abs(t))
+                    if p > mejor_p:
+                        mejor_p, mejor = p, ((ox, oy), (vx, vy), 1)
+        lineas.append(mejor)
+    nuevo = []
+    for i in range(4):
+        (p1, u1, _), (p2, u2, _) = lineas[(i - 1) % 4], lineas[i]
+        det = u1[0] * u2[1] - u1[1] * u2[0]
+        if abs(det) < 1e-6:
+            nuevo.append(q[i])
+            continue
+        t = ((p2[0] - p1[0]) * u2[1] - (p2[1] - p1[1]) * u2[0]) / det
+        x, y = p1[0] + u1[0] * t, p1[1] + u1[1] * t
+        if math.hypot(x - q[i][0], y - q[i][1]) > 6:  # no debería moverse tanto: no se toca
+            nuevo.append(q[i])
+        else:
+            nuevo.append((min(max(x, 0.0), w), min(max(y, 0.0), h)))
+    return nuevo if _cuadrilatero_ok(nuevo, w, h) else q
+
+
+def detectar_hoja_info(im):
+    """(esquinas, método, puntaje). Esquinas [sup-izq, sup-der, inf-der, inf-izq] en
+    coordenadas de la imagen; método "bordes" (líneas de Hough), "mascara" o "completa" (no se
+    distinguió una hoja: se devuelve la imagen entera)."""
+    Image, _, ImageFilter, ImageOps = _pil()
     W, H = im.size
-    completa = esquinas_completas(W, H)
-    k = min(1.0, 400.0 / max(W, H))
-    sw, sh = max(1, round(W * k)), max(1, round(H * k))
-    g = im.convert("L").resize((sw, sh), _cte(Image, "Resampling", "BILINEAR"))
+    completa = (esquinas_completas(W, H), "completa", 0.0)
+    f = int(max(W, H) // 400)
+    g = im.convert("L")
+    if f > 1:
+        g = g.reduce(f)
+    k = min(1.0, 400.0 / max(g.size))
+    sw, sh = max(1, round(g.size[0] * k)), max(1, round(g.size[1] * k))
+    g = g.resize((sw, sh), _cte(Image, "Resampling", "BILINEAR"))
+    escala = sw / float(W)
     g = g.filter(ImageFilter.GaussianBlur(1.5))
     hist = g.histogram()
     bajo = next(i for i, v in enumerate(hist) if v)
     alto = 255 - next(i for i, v in enumerate(reversed(hist)) if v)
-    if alto - bajo < 40:
+    if alto - bajo < 40 or min(sw, sh) < 40:
         return completa  # sin contraste
-    t = umbral_otsu(hist)
-    mascara = g.point([0] * (t + 1) + [255] * (255 - t))
-    mascara = mascara.filter(ImageFilter.MinFilter(5)).filter(ImageFilter.MaxFilter(5))
-    datos = mascara.tobytes()
-    # por fila alcanzan el primer y el último píxel de papel para hallar los extremos
-    sup_izq = inf_der = sup_der = inf_izq = None
-    for y in range(sh):
-        fila = datos[y * sw:(y + 1) * sw]
-        a = fila.find(b"\xff")
-        if a < 0:
+    m, gxb, gyb = _bordes(g)
+    thr = _umbral_borde(m, sw, sh)
+    gbytes = g.tobytes()
+    candidatos = [("bordes", q) for q in _candidatos_bordes(m, gxb, gyb, sw, sh, thr)]
+    cm = _candidato_mascara(g, sw, sh)
+    if cm:
+        candidatos.append(("mascara", cm))
+    mejor = None
+    for metodo, q in candidatos:
+        r = _puntaje(q, m, thr, sw, sh, gbytes)
+        if r is None:
             continue
-        b = fila.rfind(b"\xff")
-        for x in (a, b):
-            s, d = x + y, x - y
-            if sup_izq is None or s < sup_izq[0]:
-                sup_izq = (s, x, y)
-            if inf_der is None or s > inf_der[0]:
-                inf_der = (s, x, y)
-            if sup_der is None or d > sup_der[0]:
-                sup_der = (d, x, y)
-            if inf_izq is None or d < inf_izq[0]:
-                inf_izq = (d, x, y)
-    if sup_izq is None:
+        p = r[0] * (0.75 + 0.25 * _area(q) / float(sw * sh))
+        if mejor is None or p > mejor[0] + (0.0 if metodo == "bordes" else 0.03):
+            mejor = (p, metodo, q)
+    if mejor is None or mejor[0] < 0.45:
         return completa
-    pts = [(p[1], p[2]) for p in (sup_izq, sup_der, inf_der, inf_izq)]
-    if not 0.20 <= _area(pts) / float(sw * sh) <= 0.98:
-        return completa
-    return [[int(min(max(x / k, 0), W)), int(min(max(y / k, 0), H))] for x, y in pts]
+    p, metodo, q = mejor
+    q = _afinar(q, m, sw, sh)
+    return ([[int(round(min(max(x / escala, 0), W))), int(round(min(max(y / escala, 0), H)))]
+             for x, y in q], metodo, p)
+
+
+def detectar_hoja(im):
+    return detectar_hoja_info(im)[0]
 
 
 def resolver(A, b):
@@ -768,28 +1138,31 @@ def coef_perspectiva(destino, origen):
     return resolver(A, b)
 
 
-def tam_salida(q):
+def tam_salida(q, lado=None):
     import math
     d = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1])
     w = max(d(q[0], q[1]), d(q[3], q[2]))
     h = max(d(q[0], q[3]), d(q[1], q[2]))
-    if max(w, h) > LADO_MAX:
-        e = LADO_MAX / max(w, h)
+    lado = lado or LADO_MAX
+    if max(w, h) > lado:
+        e = lado / max(w, h)
         w, h = w * e, h * e
     return max(1, round(w)), max(1, round(h))
 
 
 def aclarar(im):
-    """Blanquea el papel y saca sombras: divide cada canal por el fondo estimado (la imagen
-    sin las letras y muy desenfocada). La división se hace con tablas en escala logarítmica
-    porque Pillow no divide imágenes y Python puro sería lentísimo."""
+    """Papel blanco parejo y tinta bien negra, sin perder el color de los sellos. Cada canal se
+    divide por su fondo estimado (la imagen sin letras ni trazos finos y muy desenfocada), lo que
+    saca sombras y tintes sin tocar los matices; después una curva en S lleva el papel a blanco y
+    la tinta a negro. La división se hace con tablas en escala logarítmica porque Pillow no
+    divide imágenes y Python puro sería lentísimo."""
     import math
     Image, ImageChops, ImageFilter, ImageOps = _pil()
     w, h = im.size
     f = max(1, round(max(w, h) / 600))
     chica = im.resize((max(1, w // f), max(1, h // f)), _cte(Image, "Resampling", "BILINEAR"))
-    chica = chica.filter(ImageFilter.MaxFilter(9))  # borra las letras del cálculo del fondo
-    chica = chica.filter(ImageFilter.GaussianBlur(max(2.0, max(w, h) / 30.0 / f)))
+    chica = chica.filter(ImageFilter.MaxFilter(15))  # borra letras y sellos del cálculo del fondo
+    chica = chica.filter(ImageFilter.GaussianBlur(max(2.0, max(w, h) / 40.0 / f)))
     fondo = chica.resize((w, h), _cte(Image, "Resampling", "BILINEAR"))
     esc = math.log(256)
     log = [round(255 * math.log(1 + i) / esc) for i in range(256)]
@@ -797,9 +1170,86 @@ def aclarar(im):
     n = len(im.getbands())  # una tabla de 256 valores por canal
     d = ImageChops.subtract(fondo.point(log * n), im.point(log * n))
     out = d.point(exp * n)
-    out = ImageOps.autocontrast(out, cutoff=1)
-    out = out.point([min(255, round(i * 255 / 235)) for i in range(256)] * n)  # papel a blanco
-    return out.filter(ImageFilter.UnsharpMask(radius=1.5, percent=90, threshold=2))
+    lo, hi = 50.0, 225.0
+
+    def curva(i):
+        x = min(1.0, max(0.0, (i - lo) / (hi - lo)))
+        return round(255 * x * x * (3 - 2 * x))
+    out = out.point([curva(i) for i in range(256)] * n)
+    return out.filter(ImageFilter.UnsharpMask(radius=1.5, percent=60, threshold=3))
+
+
+def recortar_resto(out, q, tam):
+    """Saca un margen interno chico (0,6 % del lado: entre 3 y 20 px) en los lados de la hoja que
+    no son el borde de la foto: tras la perspectiva ahí quedan 1 o 2 px de mesa."""
+    W, H = tam
+    w, h = out.size
+    mx = min(20, max(3, round(w * 0.006)))
+    my = min(20, max(3, round(h * 0.006)))
+    izq = 0 if (q[0][0] <= 0.5 and q[3][0] <= 0.5) else mx
+    der = 0 if (q[1][0] >= W - 0.5 and q[2][0] >= W - 0.5) else mx
+    arr = 0 if (q[0][1] <= 0.5 and q[1][1] <= 0.5) else my
+    aba = 0 if (q[2][1] >= H - 0.5 and q[3][1] >= H - 0.5) else my
+    if w - izq - der < 16 or h - arr - aba < 16:
+        return out
+    return out.crop((izq, arr, w - der, h - aba)) if (izq or der or arr or aba) else out
+
+
+def estimar_inclinacion(im, limpiar=False):
+    """Grados que hay que girar la imagen (como Image.rotate: positivo = antihorario) para que
+    los renglones queden horizontales, entre -8 y +8. Mira el perfil de proyección: con el ángulo
+    justo las filas de texto quedan bien separadas de los interlineados y la varianza de las
+    sumas por fila es máxima. Devuelve 0.0 si no hay texto suficiente o la mejora es mínima."""
+    Image, _, _, _ = _pil()
+    g = im.convert("L")
+    k = 700.0 / max(g.size)
+    if k < 1:
+        g = g.resize((max(1, round(g.size[0] * k)), max(1, round(g.size[1] * k))),
+                     _cte(Image, "Resampling", "BOX"))
+    if limpiar:
+        g = aclarar(g)
+    sw, sh = g.size
+    mx, my = int(sw * 0.03), int(sh * 0.03)
+    g = g.crop((mx, my, sw - mx, sh - my))
+    hist = g.histogram()
+    t = umbral_otsu(hist)
+    oscuros = sum(hist[:t + 1]) / float(sum(hist))
+    if not 0.002 <= oscuros <= 0.35:
+        return 0.0  # sin texto, o la zona oscura no es tinta (sombra, fondo)
+    tinta = g.point([255] * (t + 1) + [0] * (255 - t))
+    bil, box = _cte(Image, "Resampling", "BILINEAR"), _cte(Image, "Resampling", "BOX")
+    cache = {}
+
+    def puntaje(ang):
+        ang = round(ang, 2)
+        if ang not in cache:
+            r = tinta.rotate(ang, resample=bil, fillcolor=0) if ang else tinta
+            filas = r.resize((1, r.size[1]), box).tobytes()
+            media = sum(filas) / float(len(filas))
+            cache[ang] = sum((v - media) ** 2 for v in filas)
+        return cache[ang]
+    mejor = max((a / 2.0 for a in range(-16, 17)), key=puntaje)
+    mejor = max((mejor + a / 10.0 for a in range(-4, 5)), key=puntaje)
+    base = puntaje(0.0)
+    if base <= 0 or puntaje(mejor) < base * 1.02 or abs(mejor) < 0.15:
+        return 0.0
+    return round(mejor, 2)
+
+
+def enderezar_imagen(im, ang):
+    """Gira la imagen ang grados (relleno blanco, bicúbico) y recorta lo que quedó afuera: el
+    rectángulo centrado más grande, de la misma proporción, que cabe dentro de la hoja girada."""
+    import math
+    Image = _pil()[0]
+    w, h = im.size
+    blanco = 255 if len(im.getbands()) == 1 else (255,) * len(im.getbands())
+    out = im.rotate(ang, resample=_cte(Image, "Resampling", "BICUBIC"), expand=True,
+                    fillcolor=blanco)
+    c, s = abs(math.cos(math.radians(ang))), abs(math.sin(math.radians(ang)))
+    e = min(1.0, w / (w * c + h * s), h / (w * s + h * c))
+    nw, nh = max(1, int(w * e) - 4), max(1, int(h * e) - 4)  # 2 px de más por lado: sin bordes mezclados
+    x0, y0 = (out.size[0] - nw) // 2, (out.size[1] - nh) // 2
+    return out.crop((x0, y0, x0 + nw, y0 + nh))
 
 
 def guardar_vista(im, ruta, lado):
@@ -818,8 +1268,10 @@ def op_img_preparar(c):
             im = abrir_foto(ruta)
             vista, (vw, vh) = guardar_vista(
                 im, os.path.join(c["dir"], "%s%03d.png" % (c.get("prefijo", "v"), i)), lado)
+            esquinas, metodo, _ = detectar_hoja_info(im)
             fotos.append({"ruta": ruta, "ancho": im.size[0], "alto": im.size[1], "vista": vista,
-                          "vista_ancho": vw, "vista_alto": vh, "esquinas": detectar_hoja(im)})
+                          "vista_ancho": vw, "vista_alto": vh, "esquinas": esquinas,
+                          "metodo": metodo})
         except Exception as e:
             fotos.append({"ruta": ruta, "error": "%s: %s" % (type(e).__name__, str(e)[:150])})
     return {"fotos": fotos}
@@ -829,10 +1281,11 @@ def op_img_procesar(c):
     Image = _pil()[0]
     im = abrir_foto(c["ruta"])
     q = [(float(x), float(y)) for x, y in c["esquinas"]]
-    w, h = tam_salida(q)
+    w, h = tam_salida(q, int(c.get("lado_max") or LADO_MAX))
     coef = coef_perspectiva([(0, 0), (w, 0), (w, h), (0, h)], q)
     out = im.transform((w, h), _cte(Image, "Transform", "PERSPECTIVE"), coef,
                        _cte(Image, "Resampling", "BICUBIC"))
+    out = recortar_resto(out, q, im.size)
     giro = int(c.get("rotacion", 0)) % 360
     if giro:
         out = out.transpose(_cte(Image, "Transpose", {90: "ROTATE_270", 180: "ROTATE_180",
@@ -842,33 +1295,79 @@ def op_img_procesar(c):
         out = aclarar(out)
     elif modo in ("gris", "byn"):
         out = aclarar(out.convert("L"))
-        if modo == "byn":
-            out = out.point([0] * 190 + [255] * 66)
     elif modo != "original":
         raise ValueError("modo desconocido: " + str(modo))
+    angulo = 0.0
+    if c.get("enderezar", True):
+        angulo = estimar_inclinacion(out, limpiar=(modo == "original"))
+        if angulo:
+            out = enderezar_imagen(out, angulo)
+    if modo == "byn":  # el umbral va al final: girar un blanco y negro lo llenaría de grises
+        out = out.point([0] * 190 + [255] * 66)
     os.makedirs(os.path.dirname(os.path.abspath(c["salida"])), exist_ok=True)
-    out.save(c["salida"], "JPEG", quality=85)
-    res = {"salida": c["salida"], "ancho": out.size[0], "alto": out.size[1]}
+    out.save(c["salida"], "JPEG", quality=int(c.get("calidad", 85)))
+    res = {"salida": c["salida"], "ancho": out.size[0], "alto": out.size[1], "angulo": angulo}
     if c.get("vista"):
         res["vista"], (res["vista_ancho"], res["vista_alto"]) = guardar_vista(
             out, c["vista"], int(c.get("lado", 900)))
     return res
 
 
+PAGINAS = {"a4": (595.0, 842.0), "carta": (612.0, 792.0), "oficio": (612.0, 1008.0)}
+
+
+def marca_de_agua(pg, fuente, texto):
+    """Texto gris, translúcido, a 45 grados y centrado, de tamaño proporcional a la página.
+    Fuente incrustada con Unicode (como el pie), para que salgan acentos y la ñ."""
+    ancho1 = fuente.text_length(texto, fontsize=1)
+    if ancho1 <= 0:
+        return
+    r = pg.rect
+    tam = min(0.65 * (r.width ** 2 + r.height ** 2) ** 0.5 / ancho1, 0.3 * min(r.width, r.height))
+    centro = pymupdf.Point(r.width / 2, r.height / 2)
+    origen = pymupdf.Point(centro.x - ancho1 * tam / 2, centro.y + tam * 0.3)
+    pg.insert_font(fontname="marca", fontbuffer=fuente.buffer)
+    pg.insert_text(origen, texto, fontsize=tam, fontname="marca", color=(0.5, 0.5, 0.5),
+                   fill_opacity=0.15, morph=(centro, pymupdf.Matrix(45)), overlay=True)
+
+
 def op_img_pdf(c):
+    """Arma el PDF con una imagen por página. Opciones: tamano (a4, carta, oficio, foto),
+    orientacion (auto, vertical, horizontal), margen_cm y marca (texto; vacío = sin marca)."""
     Image = _pil()[0]
     if not c["imagenes"]:
         raise ValueError("no hay imágenes para armar el PDF")
+    tamano = c.get("tamano") or c.get("pagina") or "a4"
+    if tamano != "foto" and tamano not in PAGINAS:
+        raise ValueError("tamaño de página desconocido: " + str(tamano))
+    orient = c.get("orientacion", "auto")
+    margen = max(0.0, float(c.get("margen_cm", 0))) * 72.0 / 2.54
+    marca = (c.get("marca") or "").strip()
+    fuente = pymupdf.Font("helv") if marca else None
     doc = pymupdf.open()
     for ruta in c["imagenes"]:
         with Image.open(ruta) as im:
             w, h = im.size
-        if c.get("pagina", "a4") == "foto":
-            pg = doc.new_page(width=w * 72.0 / 300, height=h * 72.0 / 300)
+        if tamano == "foto":
+            pw, ph = w * 72.0 / 300, h * 72.0 / 300
         else:
-            pg = doc.new_page(width=595, height=842) if h >= w else doc.new_page(width=842, height=595)
-        pg.insert_image(pg.rect, filename=ruta, keep_proportion=True)
+            pw, ph = PAGINAS[tamano]
+            vertical = {"vertical": True, "horizontal": False}.get(orient, h >= w)
+            if not vertical:
+                pw, ph = ph, pw
+        pg = doc.new_page(width=pw, height=ph)
+        hueco = pymupdf.Rect(margen, margen, pw - margen, ph - margen)
+        if hueco.width < 10 or hueco.height < 10:
+            raise ValueError("el margen es demasiado grande para la página")
+        pg.insert_image(hueco, filename=ruta, keep_proportion=True)
+        if marca:
+            marca_de_agua(pg, fuente, marca)
     n = len(doc)
+    if marca:
+        try:
+            doc.subset_fonts()
+        except Exception:
+            pass
     guardar(doc, c["salida"], garbage=3, deflate=True)
     return {"paginas": n}
 
@@ -1023,7 +1522,11 @@ def pdf_op(cfg, emit, timeout=1800, instalar=True):
     try:
         f = tmp / "cfg.json"
         f.write_text(json.dumps(cfg), encoding="utf-8")
-        r = subprocess.run([str(py), "-c", CODIGO_PDF, str(f)], capture_output=True,
+        # El motor va en un archivo y no con "-c": Windows corta la línea de comandos en
+        # 32.767 caracteres y el código del motor ya es más largo (rompió la 5.7 en Windows).
+        motor = tmp / "motor_pdf.py"
+        motor.write_text(CODIGO_PDF, encoding="utf-8")
+        r = subprocess.run([str(py), str(motor), str(f)], capture_output=True,
                            text=True, encoding="utf-8", errors="replace", timeout=timeout,
                            creationflags=NO_WINDOW)
         for linea in reversed(r.stdout.splitlines()):
@@ -1921,6 +2424,188 @@ class DialogoPaginas(tk.Toplevel):
         self.destroy()
 
 
+def rango_paginas(texto, n):
+    """'1-3,5' -> lista de posiciones (base 0) dentro de n elementos, en orden y sin repetir.
+    Lanza ValueError con un mensaje para el usuario si el texto no sirve."""
+    t = (texto or "").strip()
+    if not t:
+        raise ValueError("Escribí qué fotos querés, por ejemplo 1-3,5.")
+    vistas, out = set(), []
+    for parte in t.replace(";", ",").split(","):
+        parte = parte.strip()
+        if not parte:
+            continue
+        m = re.fullmatch(r"(\d*)\s*-\s*(\d*)", parte)
+        if m and (m.group(1) or m.group(2)):
+            a = int(m.group(1)) if m.group(1) else 1
+            b = int(m.group(2)) if m.group(2) else n
+        elif parte.isdigit():
+            a = b = int(parte)
+        else:
+            raise ValueError(f"No entiendo «{parte}». Usá números y rangos, por ejemplo 1-3,5.")
+        if a < 1 or b < a or b > n:
+            raise ValueError(f"«{parte}» no sirve: hay {n} foto(s), numeradas de 1 a {n}.")
+        for i in range(a - 1, b):
+            if i not in vistas:
+                vistas.add(i)
+                out.append(i)
+    if not out:
+        raise ValueError("Escribí qué fotos querés, por ejemplo 1-3,5.")
+    return out
+
+
+class OpcionesPDF(tk.Toplevel):
+    """Opciones del PDF del escáner (tamaño, orientación, márgenes, rango, marca de agua y
+    calidad). Es modal; al tocar [ GUARDAR PDF ] valida, pide dónde guardar y llama a
+    al_guardar(opciones, destino). Los errores se muestran acá y la ventana no se cierra."""
+
+    TAMANOS = (("a4", "A4 (21 × 29,7 cm)"), ("carta", "Carta (21,6 × 27,9 cm)"),
+               ("oficio", "Oficio / Legal (21,6 × 35,6 cm)"), ("foto", "Tamaño de la foto"))
+    ORIENT = (("auto", "Automática según cada página"), ("vertical", "Vertical"),
+              ("horizontal", "Horizontal"))
+    MARGENES = ((0, "Sin margen"), (1, "1 cm"))
+    CALIDADES = (("alta", "Alta (3300 px, JPEG 90)"), ("media", "Media (2480 px, JPEG 82)"),
+                 ("liviana", "Liviana (1600 px, JPEG 70)"))
+    CALIDAD_PARAMS = {"alta": (3300, 90), "media": (2480, 82), "liviana": (1600, 70)}
+
+    def __init__(self, escaner, n_fotos, ini, al_guardar):
+        super().__init__(escaner)
+        self.esc, self.n, self.al_guardar = escaner, n_fotos, al_guardar
+        self.title("Opciones del PDF")
+        self.configure(background=BG)
+        self.resizable(False, False)
+        barra_oscura(self)
+        self.v_tamano = tk.StringVar(value=ini.get("tamano", "a4"))
+        self.v_orient = tk.StringVar(value=ini.get("orientacion", "auto"))
+        self.v_margen = tk.IntVar(value=int(ini.get("margen", 0)))
+        self.v_rango = tk.StringVar(value="todas")
+        self.v_rango_txt = tk.StringVar(value="")
+        self.v_marca = tk.StringVar(value="texto" if ini.get("marca") else "ninguna")
+        self.v_marca_txt = tk.StringVar(value=ini.get("marca_texto") or "COPIA")
+        self.v_calidad = tk.StringVar(value=ini.get("calidad", "media"))
+        self.v_endereza = tk.BooleanVar(value=bool(ini.get("enderezar", True)))
+        self.v_error = tk.StringVar(value="")
+
+        cont = ttk.Frame(self, padding=(22, 14, 22, 14))
+        cont.pack(fill="both", expand=True)
+        ttk.Label(cont, text="OPCIONES DEL PDF", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(cont, style="Muted.TLabel", text=f"{n_fotos} foto(s) en la lista."
+                  ).pack(anchor="w", pady=(0, 8))
+        cols = ttk.Frame(cont)
+        cols.pack(fill="x")
+        izq, der = ttk.Frame(cols), ttk.Frame(cols)
+        izq.pack(side="left", fill="y", anchor="n")
+        der.pack(side="left", fill="y", anchor="n", padx=(28, 0))
+
+        def seccion(padre, titulo):
+            ttk.Label(padre, text=titulo, style="Section.TLabel").pack(anchor="w", pady=(8, 2))
+
+        seccion(izq, "TAMAÑO")
+        for v, t in self.TAMANOS:
+            ttk.Radiobutton(izq, text=t, value=v, variable=self.v_tamano,
+                            command=self._refrescar).pack(anchor="w")
+        seccion(izq, "ORIENTACIÓN")
+        self.rb_orient = []
+        for v, t in self.ORIENT:
+            rb = ttk.Radiobutton(izq, text=t, value=v, variable=self.v_orient)
+            rb.pack(anchor="w")
+            self.rb_orient.append(rb)
+        seccion(izq, "MÁRGENES")
+        for v, t in self.MARGENES:
+            ttk.Radiobutton(izq, text=t, value=v, variable=self.v_margen).pack(anchor="w")
+
+        seccion(der, "RANGO DE PÁGINAS")
+        ttk.Radiobutton(der, text="Todas", value="todas", variable=self.v_rango,
+                        command=self._refrescar).pack(anchor="w")
+        fila = ttk.Frame(der)
+        fila.pack(anchor="w")
+        ttk.Radiobutton(fila, text="Personalizado:", value="personalizado", variable=self.v_rango,
+                        command=self._refrescar).pack(side="left")
+        self.e_rango = ttk.Entry(fila, textvariable=self.v_rango_txt, width=12)
+        self.e_rango.pack(side="left", padx=(6, 0))
+        seccion(der, "MARCA DE AGUA")
+        ttk.Radiobutton(der, text="Ninguna", value="ninguna", variable=self.v_marca,
+                        command=self._refrescar).pack(anchor="w")
+        fila = ttk.Frame(der)
+        fila.pack(anchor="w")
+        ttk.Radiobutton(fila, text="Texto:", value="texto", variable=self.v_marca,
+                        command=self._refrescar).pack(side="left")
+        self.e_marca = ttk.Entry(fila, textvariable=self.v_marca_txt, width=16)
+        self.e_marca.pack(side="left", padx=(6, 0))
+        seccion(der, "CALIDAD")
+        for v, t in self.CALIDADES:
+            ttk.Radiobutton(der, text=t, value=v, variable=self.v_calidad).pack(anchor="w")
+
+        ttk.Checkbutton(cont, text="Enderezar automáticamente", variable=self.v_endereza
+                        ).pack(anchor="w", pady=(12, 0))
+        tk.Label(cont, textvariable=self.v_error, background=BG, foreground=ROJO,
+                 font=(escaner.app.fam, 10), justify="left", wraplength=560, anchor="w"
+                 ).pack(fill="x", pady=(8, 0))
+        pie = ttk.Frame(cont)
+        pie.pack(fill="x", pady=(8, 0))
+        ttk.Button(pie, text="[ GUARDAR PDF ]", style="Accent.TButton", command=self.guardar
+                   ).pack(side="right")
+        ttk.Button(pie, text="[Cancelar]", command=self.destroy).pack(side="right", padx=(0, 10))
+        self._refrescar()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.transient(escaner)
+        self.update_idletasks()
+        x = escaner.winfo_rootx() + max(0, (escaner.winfo_width() - self.winfo_reqwidth()) // 2)
+        y = escaner.winfo_rooty() + max(0, (escaner.winfo_height() - self.winfo_reqheight()) // 3)
+        self.geometry(f"+{x}+{y}")
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass  # sin pantalla visible todavía: no es grave
+        self.focus_set()
+
+    def _refrescar(self):
+        self.e_rango.config(state="normal" if self.v_rango.get() == "personalizado" else "disabled")
+        self.e_marca.config(state="normal" if self.v_marca.get() == "texto" else "disabled")
+        estado = "disabled" if self.v_tamano.get() == "foto" else "normal"
+        for rb in self.rb_orient:  # con el tamaño de la foto la página sigue a la foto
+            rb.config(state=estado)
+
+    def opciones(self):
+        """Lee y valida. Devuelve el diccionario de opciones o lanza ValueError."""
+        fotos = None
+        if self.v_rango.get() == "personalizado":
+            fotos = rango_paginas(self.v_rango_txt.get(), self.n)
+        marca = ""
+        if self.v_marca.get() == "texto":
+            marca = self.v_marca_txt.get().strip()
+            if not marca:
+                raise ValueError("Escribí el texto de la marca de agua o elegí «Ninguna».")
+        lado, calidad = self.CALIDAD_PARAMS[self.v_calidad.get()]
+        return {"tamano": self.v_tamano.get(), "orientacion": self.v_orient.get(),
+                "margen": int(self.v_margen.get()), "fotos": fotos, "marca": marca,
+                "calidad_nombre": self.v_calidad.get(), "lado_max": lado, "calidad": calidad,
+                "enderezar": bool(self.v_endereza.get())}
+
+    def guardar(self):
+        try:
+            op = self.opciones()
+        except ValueError as e:
+            self.v_error.set(str(e))
+            return
+        self.v_error.set("")
+        destino = filedialog.asksaveasfilename(
+            parent=self, title="Dónde guardar el PDF", defaultextension=".pdf",
+            initialfile="Escaneo.pdf", filetypes=[("PDF", "*.pdf")],
+            initialdir=str(self.esc.app.base or self.esc.app.cfg.get("carpeta") or Path.home()))
+        if not destino:
+            return
+        cfg = self.esc.app.cfg
+        cfg.update({"esc_tamano": op["tamano"], "esc_orient": op["orientacion"],
+                    "esc_margen": op["margen"], "esc_marca": bool(op["marca"]),
+                    "esc_marca_texto": self.v_marca_txt.get().strip() or "COPIA",
+                    "esc_calidad": op["calidad_nombre"], "esc_enderezar": op["enderezar"]})
+        guardar_config(cfg)
+        self.destroy()
+        self.al_guardar(op, Path(destino))
+
+
 class Escaner(tk.Toplevel):
     """Escáner de documentos: fotos » hoja recortada y enderezada » PDF (reemplazo local de
     CamScanner). La imagen la procesa el worker con Pillow; acá solo se muestran PNG."""
@@ -1951,10 +2636,10 @@ class Escaner(tk.Toplevel):
         self.resultado = None
         self.creando = False
         self.cancelar = False
+        self.dialogo = None
         self.contador = 0
         self.v_modo = tk.StringVar(value="aclarar")
         self.v_todas = tk.BooleanVar(value=False)
-        self.v_pagina = tk.StringVar(value="a4")
         self.v_estado = tk.StringVar(value="Agregá las fotos de la hoja que querés escanear.")
         self._armar()
         self._mostrar()
@@ -1978,11 +2663,6 @@ class Escaner(tk.Toplevel):
                   justify="left").pack(side="bottom", anchor="w", pady=(8, 0))
         fila = ttk.Frame(pie)
         fila.pack(fill="x")
-        ttk.Label(fila, text="Tamaño de página:").pack(side="left")
-        ttk.Radiobutton(fila, text="A4", value="a4", variable=self.v_pagina
-                        ).pack(side="left", padx=(10, 6))
-        ttk.Radiobutton(fila, text="Tamaño de la foto", value="foto", variable=self.v_pagina
-                        ).pack(side="left", padx=6)
         self.btn_crear = ttk.Button(fila, text="[ CREAR PDF ]", style="Accent.TButton",
                                     command=self.crear_pdf)
         self.btn_crear.pack(side="right")
@@ -2104,13 +2784,16 @@ class Escaner(tk.Toplevel):
                 "alto": f["alto"], "vista": f["vista"], "vw": f["vista_ancho"],
                 "vh": f["vista_alto"], "esquinas": [list(p) for p in f["esquinas"]],
                 "auto": [list(p) for p in f["esquinas"]],
-                "modo": self.v_modo.get(), "giro": 0})
+                "modo": self.v_modo.get(), "giro": 0, "metodo": f.get("metodo", "")})
         if malas:
             messagebox.showwarning("Fotos que no se pudieron abrir", "\n".join(malas[:8]),
                                    parent=self)
         self._llenar_lista(self.actual if self.actual is not None else (0 if self.fotos else None))
+        sin_hoja = sum(1 for f in r["fotos"] if f.get("metodo") == "completa")
         self.v_estado.set(f"{len(self.fotos)} foto(s) en la lista. Ajustá las esquinas de cada "
-                          "una si hace falta.")
+                          "una si hace falta."
+                          + (f" En {sin_hoja} no pude distinguir la hoja: se toma la foto entera."
+                             if sin_hoja else ""))
 
     # ------------------------------------------------------------------ lista
     def _llenar_lista(self, sel=None):
@@ -2281,28 +2964,38 @@ class Escaner(tk.Toplevel):
 
     # --------------------------------------------------------------- crear PDF
     def crear_pdf(self):
+        """Abre las opciones del PDF; al guardar, arma el archivo en segundo plano."""
         if self.creando:
             return
         if not self.fotos:
             messagebox.showinfo("Sin fotos", "Primero agregá al menos una foto.", parent=self)
             return
-        destino = filedialog.asksaveasfilename(
-            parent=self, title="Dónde guardar el PDF", defaultextension=".pdf",
-            initialfile="Escaneo.pdf", filetypes=[("PDF", "*.pdf")],
-            initialdir=str(self.app.base or self.app.cfg.get("carpeta") or Path.home()))
-        if not destino:
+        if getattr(self, "dialogo", None) is not None and self.dialogo.winfo_exists():
+            self.dialogo.focus_set()
             return
-        destino = Path(destino)
+        cfg = self.app.cfg
+        ini = {"tamano": cfg.get("esc_tamano", "a4"), "orientacion": cfg.get("esc_orient", "auto"),
+               "margen": cfg.get("esc_margen", 0), "marca": cfg.get("esc_marca", False),
+               "marca_texto": cfg.get("esc_marca_texto", "COPIA"),
+               "calidad": cfg.get("esc_calidad", "media"),
+               "enderezar": cfg.get("esc_enderezar", True)}
+        self.dialogo = OpcionesPDF(self, len(self.fotos), ini, self._armar_pdf)
+
+    def _armar_pdf(self, op, destino):
+        if self.creando or not self.fotos:
+            return
         if destino.suffix.lower() != ".pdf":
             destino = destino.with_name(destino.name + ".pdf")
-        datos = [{"ruta": f["ruta"], "nombre": f["nombre"], "esquinas": [list(p) for p in f["esquinas"]],
-                  "giro": f["giro"], "modo": f["modo"]} for f in self.fotos]
-        pagina = self.v_pagina.get()
+        elegidas = op["fotos"] if op["fotos"] is not None else range(len(self.fotos))
+        datos = [{"ruta": self.fotos[i]["ruta"], "nombre": self.fotos[i]["nombre"],
+                  "esquinas": [list(p) for p in self.fotos[i]["esquinas"]],
+                  "giro": self.fotos[i]["giro"], "modo": self.fotos[i]["modo"]}
+                 for i in elegidas if i < len(self.fotos)]
         self.creando, self.cancelar = True, False
         self.btn_crear.config(state="disabled")
-        threading.Thread(target=self._crear, args=(datos, destino, pagina), daemon=True).start()
+        threading.Thread(target=self._crear, args=(datos, destino, op), daemon=True).start()
 
-    def _crear(self, datos, destino, pagina):
+    def _crear(self, datos, destino, op):
         emit = lambda t, d: self.cola.put(("estado", d)) if t == "log" else None
         n = len(datos)
         try:
@@ -2313,14 +3006,17 @@ class Escaner(tk.Toplevel):
                 self.cola.put(("estado", f"Procesando foto {i} de {n}: {d['nombre']}…"))
                 salida = self.tmp / f"p{i:03d}.jpg"
                 r = pdf_op({"op": "img_procesar", "ruta": str(d["ruta"]), "esquinas": d["esquinas"],
-                            "rotacion": d["giro"], "modo": d["modo"], "salida": str(salida)}, emit)
+                            "rotacion": d["giro"], "modo": d["modo"], "salida": str(salida),
+                            "lado_max": op["lado_max"], "calidad": op["calidad"],
+                            "enderezar": op["enderezar"]}, emit)
                 if "error" in r:
                     self.cola.put(("error", (r["error"], d["nombre"])))
                     return
                 jpgs.append(str(salida))
             self.cola.put(("estado", f"Armando el PDF de {n} página(s)…"))
             r = pdf_op({"op": "img_pdf", "imagenes": jpgs, "salida": str(destino),
-                        "pagina": pagina}, emit)
+                        "tamano": op["tamano"], "orientacion": op["orientacion"],
+                        "margen_cm": op["margen"], "marca": op["marca"]}, emit)
             if "error" in r:
                 self.cola.put(("error", (r["error"], None)))
                 return

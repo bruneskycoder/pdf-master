@@ -22,15 +22,15 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Dependencias de prueba
-        run: python -m pip install pytest pymupdf pillow
+        run: python -m pip install pytest pytest-timeout pymupdf pillow
       - name: Pruebas (Windows)
         if: runner.os == 'Windows'
-        run: python -m pytest -q -rs
+        run: python -m pytest -q -rs --timeout=120
       - name: Pruebas (Linux, con pantalla virtual)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get install -y -q xvfb > /dev/null
-          xvfb-run -a python -m pytest -q -rs
+          xvfb-run -a python -m pytest -q -rs --timeout=120
       - name: Capturas de la interfaz en Windows
         if: runner.os == 'Windows' && matrix.python == '3.14'
         run: python tests/captura.py capturas-windows

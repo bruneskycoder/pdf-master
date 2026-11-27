@@ -146,3 +146,22 @@ def test_comprimir_informa_el_signo_correcto(pm, hacer_pdf, tmp_path):
     signo = "-" if despues < antes else "+"
     assert f"({signo}" in linea
     assert eventos[-1] == ("fin", "Listo.")
+
+
+def test_el_motor_no_va_por_la_linea_de_comandos(pm, monkeypatch):
+    """Windows corta la línea de comandos en 32.767 caracteres; el código del motor es más
+    largo. Pasarlo con "-c" rompió todo el motor PDF de la 5.7 en Windows."""
+    vistos = []
+    real = pm.subprocess.run
+
+    def espiar(args, *a, **kw):
+        if isinstance(args, (list, tuple)) and len(args) == 3 and str(args[-1]).endswith("cfg.json"):
+            vistos.append(args)
+        return real(args, *a, **kw)
+    monkeypatch.setattr(pm.subprocess, "run", espiar)
+    r = pm.pdf_op({"op": "info", "rutas": []}, lambda t, d: None, instalar=False)
+    assert "error" not in r, r
+    assert vistos, "no se llamó al motor"
+    largo = sum(len(str(x)) + 1 for x in vistos[0])
+    assert "-c" not in vistos[0] and largo < 2000, largo
+    assert len(pm.CODIGO_PDF) > 0
