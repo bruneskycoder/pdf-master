@@ -2,6 +2,23 @@
 
 Formato: versión, qué cambia para quien lo usa y, aparte, lo técnico.
 
+## 5.4 — 2026-11-27
+
+**Para quien lo usa**
+
+- **Escáner de fotos a PDF** (`MÁS… » Escanear fotos a PDF`), un reemplazo local de CamScanner. Agregás fotos (JPG, PNG, BMP, TIF o WEBP), el programa detecta la hoja y marca las cuatro esquinas; las arrastrás si no acertó, o tocás `[Detectar bordes]` o `[Toda la hoja]`.
+- Cuatro modos: *Original*, *Aclarar* (saca sombras y blanquea el papel), *Blanco y negro* y *Gris*, con opción de aplicarlo a todas las fotos. `[Rotar]` gira la hoja y `[Ver resultado]` muestra cómo queda antes de guardar.
+- `[ CREAR PDF ]` arma el PDF (página A4 o del tamaño de la foto) sin congelar la ventana, con el avance real en una línea de estado. Respeta «Abrir el resultado al terminar».
+- Las fotos HEIC de iPhone no se leen: el programa lo dice y pide exportarlas como JPG.
+- Pillow se instala solo, igual que PyMuPDF, la primera vez que se usa el escáner.
+
+**Técnico**
+
+- El motor PDF suma `img_preparar`, `img_procesar` e `img_pdf` (Pillow se importa recién ahí). La búsqueda e instalación de Python se generaliza en `python_con(modulos, ...)`; `pdf_op` pide PyMuPDF y Pillow solo para las operaciones `img_*`.
+- Perspectiva con `Image.transform` y un sistema 8x8 resuelto por eliminación gaussiana en Python puro; detección de la hoja con umbral de Otsu y extremos de `x+y` y `x-y`; «aclarar» divide por el fondo con tablas logarítmicas (Pillow no divide imágenes).
+- Clase nueva `Escaner` (ventana) y acción `escaner` en `Guion` (con su versión llana para el modo apagado). La ventana no importa Pillow: muestra PNG con `tk.PhotoImage`.
+- 94 pruebas (más 1 salteada), 20 de ellas del escáner: solver, detección, modos, PDF, subproceso real y ventana completa.
+
 ## 5.3 — 2026-11-25
 
 **Para quien lo usa**

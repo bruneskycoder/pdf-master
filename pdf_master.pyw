@@ -8,9 +8,10 @@ Ventanas:
                             intervalo; unión con página en blanco si es impar y pie de página.
   2. Herramientas PDF     : dividir, comprimir y eliminar páginas con vista de miniaturas.
   3. Carpetas automáticas : carpetas vigiladas que dividen, unen o comprimen solas lo que llegue.
+  4. Escáner de fotos     : fotos de hojas » recorte, perspectiva y limpieza » PDF (Pillow).
 
 Motor de conversión: LibreOffice (si falta, el programa lo descarga y lo instala).
-Motor PDF: PyMuPDF (si falta, el programa lo instala con pip, una sola vez).
+Motor PDF: PyMuPDF; escáner de fotos: Pillow (si faltan, el programa los instala con pip, una sola vez).
 Fuentes incluidas: VT323 y Share Tech Mono (SIL Open Font License 1.1).
 
 Licencia MIT. © 2026 Bruno Gutiérrez (@bruneskycoder).
@@ -46,7 +47,7 @@ except Exception:
     _BaseTk = tk.Tk
     HAY_DND = False
 
-VERSION = "5.3"
+VERSION = "5.4"
 CONVERTIBLES = {".docx", ".doc", ".pptx", ".ppt"}
 EXT = CONVERTIBLES | {".pdf"}
 CONFIG = Path.home() / ".convertidor_word_pdf.json"
@@ -610,8 +611,246 @@ def op_compress(c):
     return {"antes": antes, "despues": os.path.getsize(destino), "nota": nota}
 
 
+# ---- escáner de fotos (necesita Pillow; se importa recién acá para no exigirlo al resto)
+LADO_MAX = 2480  # lado mayor de la hoja procesada (A4 a 300 dpi)
+
+
+def _pil():
+    from PIL import Image, ImageChops, ImageFilter, ImageOps
+    return Image, ImageChops, ImageFilter, ImageOps
+
+
+def _cte(Image, grupo, nombre):
+    """Constantes de Pillow: en las versiones nuevas viven en un enum, en las viejas en Image."""
+    return getattr(getattr(Image, grupo, Image), nombre)
+
+
+def abrir_foto(ruta):
+    Image, _, _, ImageOps = _pil()
+    im = Image.open(ruta)
+    im.load()
+    im = ImageOps.exif_transpose(im) or im
+    if im.mode in ("RGBA", "LA", "P"):
+        im = im.convert("RGBA")
+        fondo = Image.new("RGB", im.size, (255, 255, 255))
+        fondo.paste(im, mask=im.split()[3])
+        return fondo
+    return im if im.mode == "RGB" else im.convert("RGB")
+
+
+def umbral_otsu(hist):
+    """Umbral que mejor separa claros de oscuros, calculado del histograma (0-255)."""
+    total = sum(hist)
+    suma = sum(i * h for i, h in enumerate(hist))
+    sb = wb = 0
+    mejor, umbral = -1.0, 127
+    for t in range(256):
+        wb += hist[t]
+        if wb == 0:
+            continue
+        wf = total - wb
+        if wf == 0:
+            break
+        sb += t * hist[t]
+        var = wb * wf * (sb / wb - (suma - sb) / wf) ** 2
+        if var > mejor:
+            mejor, umbral = var, t
+    return umbral
+
+
+def esquinas_completas(w, h):
+    return [[0, 0], [w, 0], [w, h], [0, h]]
+
+
+def _area(p):
+    return abs(sum(p[i][0] * p[(i + 1) % 4][1] - p[(i + 1) % 4][0] * p[i][1] for i in range(4))) / 2
+
+
+def detectar_hoja(im):
+    """Esquinas [sup-izq, sup-der, inf-der, inf-izq] de la hoja clara sobre fondo más oscuro,
+    en coordenadas de la imagen. Si no se distingue una hoja, devuelve la imagen completa."""
+    Image, _, ImageFilter, _ = _pil()
+    W, H = im.size
+    completa = esquinas_completas(W, H)
+    k = min(1.0, 400.0 / max(W, H))
+    sw, sh = max(1, round(W * k)), max(1, round(H * k))
+    g = im.convert("L").resize((sw, sh), _cte(Image, "Resampling", "BILINEAR"))
+    g = g.filter(ImageFilter.GaussianBlur(1.5))
+    hist = g.histogram()
+    bajo = next(i for i, v in enumerate(hist) if v)
+    alto = 255 - next(i for i, v in enumerate(reversed(hist)) if v)
+    if alto - bajo < 40:
+        return completa  # sin contraste
+    t = umbral_otsu(hist)
+    mascara = g.point([0] * (t + 1) + [255] * (255 - t))
+    mascara = mascara.filter(ImageFilter.MinFilter(5)).filter(ImageFilter.MaxFilter(5))
+    datos = mascara.tobytes()
+    # por fila alcanzan el primer y el último píxel de papel para hallar los extremos
+    sup_izq = inf_der = sup_der = inf_izq = None
+    for y in range(sh):
+        fila = datos[y * sw:(y + 1) * sw]
+        a = fila.find(b"\xff")
+        if a < 0:
+            continue
+        b = fila.rfind(b"\xff")
+        for x in (a, b):
+            s, d = x + y, x - y
+            if sup_izq is None or s < sup_izq[0]:
+                sup_izq = (s, x, y)
+            if inf_der is None or s > inf_der[0]:
+                inf_der = (s, x, y)
+            if sup_der is None or d > sup_der[0]:
+                sup_der = (d, x, y)
+            if inf_izq is None or d < inf_izq[0]:
+                inf_izq = (d, x, y)
+    if sup_izq is None:
+        return completa
+    pts = [(p[1], p[2]) for p in (sup_izq, sup_der, inf_der, inf_izq)]
+    if not 0.20 <= _area(pts) / float(sw * sh) <= 0.98:
+        return completa
+    return [[int(min(max(x / k, 0), W)), int(min(max(y / k, 0), H))] for x, y in pts]
+
+
+def resolver(A, b):
+    """Sistema lineal por eliminación gaussiana con pivoteo (sin numpy)."""
+    n = len(b)
+    M = [fila[:] + [b[i]] for i, fila in enumerate(A)]
+    for c in range(n):
+        p = max(range(c, n), key=lambda r: abs(M[r][c]))
+        if abs(M[p][c]) < 1e-9:
+            raise ValueError("las esquinas no forman un cuadrilátero válido")
+        M[c], M[p] = M[p], M[c]
+        for r in range(c + 1, n):
+            f = M[r][c] / M[c][c]
+            if f:
+                for j in range(c, n + 1):
+                    M[r][j] -= f * M[c][j]
+    x = [0.0] * n
+    for i in range(n - 1, -1, -1):
+        x[i] = (M[i][n] - sum(M[i][j] * x[j] for j in range(i + 1, n))) / M[i][i]
+    return x
+
+
+def coef_perspectiva(destino, origen):
+    """Coeficientes para Image.transform(PERSPECTIVE): cada punto del destino sale de
+    su punto de origen."""
+    A, b = [], []
+    for (X, Y), (x, y) in zip(destino, origen):
+        A.append([X, Y, 1, 0, 0, 0, -x * X, -x * Y])
+        b.append(x)
+        A.append([0, 0, 0, X, Y, 1, -y * X, -y * Y])
+        b.append(y)
+    return resolver(A, b)
+
+
+def tam_salida(q):
+    import math
+    d = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1])
+    w = max(d(q[0], q[1]), d(q[3], q[2]))
+    h = max(d(q[0], q[3]), d(q[1], q[2]))
+    if max(w, h) > LADO_MAX:
+        e = LADO_MAX / max(w, h)
+        w, h = w * e, h * e
+    return max(1, round(w)), max(1, round(h))
+
+
+def aclarar(im):
+    """Blanquea el papel y saca sombras: divide cada canal por el fondo estimado (la imagen
+    sin las letras y muy desenfocada). La división se hace con tablas en escala logarítmica
+    porque Pillow no divide imágenes y Python puro sería lentísimo."""
+    import math
+    Image, ImageChops, ImageFilter, ImageOps = _pil()
+    w, h = im.size
+    f = max(1, round(max(w, h) / 600))
+    chica = im.resize((max(1, w // f), max(1, h // f)), _cte(Image, "Resampling", "BILINEAR"))
+    chica = chica.filter(ImageFilter.MaxFilter(9))  # borra las letras del cálculo del fondo
+    chica = chica.filter(ImageFilter.GaussianBlur(max(2.0, max(w, h) / 30.0 / f)))
+    fondo = chica.resize((w, h), _cte(Image, "Resampling", "BILINEAR"))
+    esc = math.log(256)
+    log = [round(255 * math.log(1 + i) / esc) for i in range(256)]
+    exp = [round(255 * math.exp(-d * esc / 255)) for d in range(256)]
+    n = len(im.getbands())  # una tabla de 256 valores por canal
+    d = ImageChops.subtract(fondo.point(log * n), im.point(log * n))
+    out = d.point(exp * n)
+    out = ImageOps.autocontrast(out, cutoff=1)
+    out = out.point([min(255, round(i * 255 / 235)) for i in range(256)] * n)  # papel a blanco
+    return out.filter(ImageFilter.UnsharpMask(radius=1.5, percent=90, threshold=2))
+
+
+def guardar_vista(im, ruta, lado):
+    v = im.copy()
+    v.thumbnail((lado, lado))
+    v.save(ruta, "PNG")
+    return ruta, v.size
+
+
+def op_img_preparar(c):
+    os.makedirs(c["dir"], exist_ok=True)
+    lado = int(c.get("lado", 900))
+    fotos = []
+    for i, ruta in enumerate(c["rutas"]):
+        try:
+            im = abrir_foto(ruta)
+            vista, (vw, vh) = guardar_vista(
+                im, os.path.join(c["dir"], "%s%03d.png" % (c.get("prefijo", "v"), i)), lado)
+            fotos.append({"ruta": ruta, "ancho": im.size[0], "alto": im.size[1], "vista": vista,
+                          "vista_ancho": vw, "vista_alto": vh, "esquinas": detectar_hoja(im)})
+        except Exception as e:
+            fotos.append({"ruta": ruta, "error": "%s: %s" % (type(e).__name__, str(e)[:150])})
+    return {"fotos": fotos}
+
+
+def op_img_procesar(c):
+    Image = _pil()[0]
+    im = abrir_foto(c["ruta"])
+    q = [(float(x), float(y)) for x, y in c["esquinas"]]
+    w, h = tam_salida(q)
+    coef = coef_perspectiva([(0, 0), (w, 0), (w, h), (0, h)], q)
+    out = im.transform((w, h), _cte(Image, "Transform", "PERSPECTIVE"), coef,
+                       _cte(Image, "Resampling", "BICUBIC"))
+    giro = int(c.get("rotacion", 0)) % 360
+    if giro:
+        out = out.transpose(_cte(Image, "Transpose", {90: "ROTATE_270", 180: "ROTATE_180",
+                                                        270: "ROTATE_90"}[giro]))
+    modo = c.get("modo", "aclarar")
+    if modo == "aclarar":
+        out = aclarar(out)
+    elif modo in ("gris", "byn"):
+        out = aclarar(out.convert("L"))
+        if modo == "byn":
+            out = out.point([0] * 190 + [255] * 66)
+    elif modo != "original":
+        raise ValueError("modo desconocido: " + str(modo))
+    os.makedirs(os.path.dirname(os.path.abspath(c["salida"])), exist_ok=True)
+    out.save(c["salida"], "JPEG", quality=85)
+    res = {"salida": c["salida"], "ancho": out.size[0], "alto": out.size[1]}
+    if c.get("vista"):
+        res["vista"], (res["vista_ancho"], res["vista_alto"]) = guardar_vista(
+            out, c["vista"], int(c.get("lado", 900)))
+    return res
+
+
+def op_img_pdf(c):
+    Image = _pil()[0]
+    if not c["imagenes"]:
+        raise ValueError("no hay imágenes para armar el PDF")
+    doc = pymupdf.open()
+    for ruta in c["imagenes"]:
+        with Image.open(ruta) as im:
+            w, h = im.size
+        if c.get("pagina", "a4") == "foto":
+            pg = doc.new_page(width=w * 72.0 / 300, height=h * 72.0 / 300)
+        else:
+            pg = doc.new_page(width=595, height=842) if h >= w else doc.new_page(width=842, height=595)
+        pg.insert_image(pg.rect, filename=ruta, keep_proportion=True)
+    n = len(doc)
+    guardar(doc, c["salida"], garbage=3, deflate=True)
+    return {"paginas": n}
+
+
 OPS = {"info": op_info, "merge": op_merge, "thumbs": op_thumbs, "delete": op_delete,
-       "split": op_split, "compress": op_compress}
+       "split": op_split, "compress": op_compress, "img_preparar": op_img_preparar,
+       "img_procesar": op_img_procesar, "img_pdf": op_img_pdf}
 
 if __name__ == "__main__":
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -622,7 +861,7 @@ if __name__ == "__main__":
     print("@@JSON@@" + json.dumps(res, ensure_ascii=False))
 '''
 
-_PY_PDF = {"exe": None}
+_PY_PDF = {}  # (módulos,) -> ejecutable de Python que los tiene
 
 
 def _consola(exe: Path) -> Path:
@@ -662,51 +901,70 @@ def _otros_pythons():
     return out
 
 
-def python_con_pymupdf(emit, instalar=True):
-    """Devuelve un Python que tenga PyMuPDF (instalándolo si hace falta), o None."""
-    if _PY_PDF["exe"] and Path(_PY_PDF["exe"]).exists():
-        return Path(_PY_PDF["exe"])
+PAQUETES_PIP = {"pymupdf": "pymupdf", "PIL": "pillow"}
+NOMBRES_COMPONENTE = {"pymupdf": "el componente PDF (PyMuPDF)", "PIL": "el componente de imágenes (Pillow)"}
+
+
+def python_con(modulos, emit, instalar=True):
+    """Devuelve un Python que tenga todos los módulos pedidos (instalando con pip los que
+    falten en el Python actual), o None."""
+    clave = tuple(modulos)
+    if _PY_PDF.get(clave) and Path(_PY_PDF[clave]).exists():
+        return Path(_PY_PDF[clave])
+    completo = lambda exe: all(_tiene_modulo(exe, m) for m in clave)
     actual = _consola(Path(sys.executable))
-    if _tiene_modulo(actual, "pymupdf"):
-        _PY_PDF["exe"] = str(actual)
+    if completo(actual):
+        _PY_PDF[clave] = str(actual)
         return actual
     for otro in _otros_pythons():
-        if _tiene_modulo(otro, "pymupdf"):
-            _PY_PDF["exe"] = str(otro)
+        if completo(otro):
+            _PY_PDF[clave] = str(otro)
             return otro
     if not instalar:
         return None
-    emit("log", "Instalando el componente PDF (PyMuPDF, una sola vez; puede tardar un minuto)…")
+    faltan = [m for m in clave if not _tiene_modulo(actual, m)] or list(clave)
+    nombres = " y ".join(NOMBRES_COMPONENTE[m] for m in faltan)
+    emit("log", f"Instalando {nombres}, una sola vez; puede tardar un minuto…")
     detalle = ""
     for extra in ([], ["--user"]):
         try:
             r = subprocess.run(
                 [str(actual), "-m", "pip", "install", "--quiet", "--disable-pip-version-check",
-                 *extra, "pymupdf"],
+                 *extra, *[PAQUETES_PIP[m] for m in faltan]],
                 capture_output=True, text=True, errors="replace", timeout=600,
                 creationflags=NO_WINDOW)
         except Exception as e:
             detalle = str(e)
             continue
-        if r.returncode == 0 and _tiene_modulo(actual, "pymupdf"):
-            _PY_PDF["exe"] = str(actual)
+        if r.returncode == 0 and completo(actual):
+            _PY_PDF[clave] = str(actual)
             return actual
         detalle = (r.stderr or r.stdout or "")[-300:].strip()
-    emit("log", f"No pude instalar PyMuPDF: {detalle}")
+    emit("log", f"No pude instalar {nombres}: {detalle}")
     return None
+
+
+def python_con_pymupdf(emit, instalar=True):
+    """Devuelve un Python que tenga PyMuPDF (instalándolo si hace falta), o None."""
+    return python_con(("pymupdf",), emit, instalar)
 
 
 AYUDA_PYMUPDF = ("No pude preparar el componente PDF (PyMuPDF).\n\n"
                  "Solución manual: abrí una consola (cmd) y ejecutá:\n"
                  "python -m pip install pymupdf\n\nDespués volvé a intentar.")
+AYUDA_IMAGENES = ("No pude preparar los componentes para escanear fotos (PyMuPDF y Pillow).\n\n"
+                  "Solución manual: abrí una consola (cmd) y ejecutá:\n"
+                  "python -m pip install pymupdf pillow\n\nDespués volvé a intentar.")
 
 
 def pdf_op(cfg, emit, timeout=1800, instalar=True):
-    """Ejecuta una operación PDF en el Python que tenga PyMuPDF. Devuelve un dict;
-    con clave 'error' si algo falló."""
-    py = python_con_pymupdf(emit, instalar)
+    """Ejecuta una operación PDF o de imagen en el Python que tenga los módulos necesarios.
+    Devuelve un dict; con clave 'error' si algo falló ('no_pymupdf' o 'no_imagenes' si no
+    se pudieron preparar los componentes)."""
+    imagen = str(cfg.get("op", "")).startswith("img_")
+    py = python_con(("pymupdf", "PIL") if imagen else ("pymupdf",), emit, instalar)
     if not py:
-        return {"error": "no_pymupdf"}
+        return {"error": "no_imagenes" if imagen else "no_pymupdf"}
     tmp = Path(tempfile.mkdtemp(prefix="pdfop_"))
     try:
         f = tmp / "cfg.json"
@@ -1174,6 +1432,480 @@ class DialogoPaginas(tk.Toplevel):
         self.destroy()
 
 
+class Escaner(tk.Toplevel):
+    """Escáner de documentos: fotos » hoja recortada y enderezada » PDF (reemplazo local de
+    CamScanner). La imagen la procesa el worker con Pillow; acá solo se muestran PNG."""
+
+    EXT = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+    LADO = 500          # lado mayor de las vistas previas
+    LONA = (560, 520)   # tamaño del recuadro de vista previa
+    ASA = 7             # medio lado de las asas
+    MODOS = (("original", "Original"), ("aclarar", "Aclarar"),
+             ("byn", "Blanco y negro"), ("gris", "Gris"))
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Escanear fotos a PDF")
+        self.geometry("1110x740")
+        self.minsize(1000, 680)
+        self.configure(background=BG)
+        barra_oscura(self)
+        self.tmp = Path(tempfile.mkdtemp(prefix="escaner_"))
+        self.cola = queue.Queue()
+        self.fotos = []      # dicts: ruta, nombre, ancho, alto, vista, vw, vh, esquinas, auto, modo, giro
+        self.actual = None   # índice de la foto que se está editando
+        self.imagen = None   # la PhotoImage mostrada (hay que retenerla)
+        self.origen = (0, 0, 1.0)   # desplazamiento y escala de la vista previa en el recuadro
+        self.asa = None      # asa que se está arrastrando
+        self.viendo = False  # True: se muestra el resultado, no la edición
+        self.resultado = None
+        self.creando = False
+        self.cancelar = False
+        self.contador = 0
+        self.v_modo = tk.StringVar(value="aclarar")
+        self.v_todas = tk.BooleanVar(value=False)
+        self.v_pagina = tk.StringVar(value="a4")
+        self.v_estado = tk.StringVar(value="Agregá las fotos de la hoja que querés escanear.")
+        self._armar()
+        self._mostrar()
+        self.bind("<Destroy>", self._al_destruir)
+        self.protocol("WM_DELETE_WINDOW", self._cerrar)
+        self.after(100, self._sondear)
+
+    # ------------------------------------------------------------------ armado
+    def _armar(self):
+        cont = ttk.Frame(self, padding=(22, 14, 22, 12))
+        cont.pack(fill="both", expand=True)
+        ttk.Label(cont, text="ESCÁNER DE DOCUMENTOS", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(cont, style="Muted.TLabel",
+                  text="Sacale fotos a una hoja, ajustá las esquinas y armá un PDF. Todo pasa en "
+                       "esta PC."
+                  ).pack(anchor="w", pady=(0, 8))
+        # abajo primero, para que no lo tape el resto
+        pie = ttk.Frame(cont)
+        pie.pack(side="bottom", fill="x", pady=(8, 0))
+        ttk.Label(pie, textvariable=self.v_estado, style="Muted.TLabel", wraplength=1000,
+                  justify="left").pack(side="bottom", anchor="w", pady=(8, 0))
+        fila = ttk.Frame(pie)
+        fila.pack(fill="x")
+        ttk.Label(fila, text="Tamaño de página:").pack(side="left")
+        ttk.Radiobutton(fila, text="A4", value="a4", variable=self.v_pagina
+                        ).pack(side="left", padx=(10, 6))
+        ttk.Radiobutton(fila, text="Tamaño de la foto", value="foto", variable=self.v_pagina
+                        ).pack(side="left", padx=6)
+        self.btn_crear = ttk.Button(fila, text="[ CREAR PDF ]", style="Accent.TButton",
+                                    command=self.crear_pdf)
+        self.btn_crear.pack(side="right")
+
+        medio = ttk.Frame(cont)
+        medio.pack(fill="both", expand=True)
+        # izquierda: lista de fotos
+        izq = ttk.Frame(medio)
+        izq.pack(side="left", fill="y")
+        ttk.Label(izq, text="FOTOS", style="Section.TLabel").pack(anchor="w")
+        ttk.Button(izq, text="[ + AGREGAR FOTOS ]", command=self.agregar_dialogo
+                   ).pack(anchor="w", pady=(4, 6))
+        cuerpo = tk.Frame(izq, background=LINEA, padx=1, pady=1)
+        cuerpo.pack(fill="both", expand=True)
+        sb = ttk.Scrollbar(cuerpo)
+        sb.pack(side="right", fill="y")
+        self.lista = tk.Listbox(cuerpo, selectmode="browse", activestyle="none", width=26,
+                                exportselection=False, yscrollcommand=sb.set, relief="flat",
+                                borderwidth=0, highlightthickness=0, background=PANEL,
+                                foreground=FG, font=(self.app.fam, 10),
+                                selectbackground=ACENTO_OSC, selectforeground=ACENTO)
+        self.lista.pack(side="left", fill="both", expand=True)
+        sb.config(command=self.lista.yview)
+        self.lista.bind("<<ListboxSelect>>", self._elegida)
+        fb = ttk.Frame(izq)
+        fb.pack(fill="x", pady=(6, 0))
+        for texto, cmd in (("[Quitar]", self.quitar), ("[Subir]", lambda: self.mover(-1)),
+                           ("[Bajar]", lambda: self.mover(1))):
+            ttk.Button(fb, text=texto, style="Link.TButton", command=cmd).pack(side="left", padx=(0, 8))
+        # derecha: controles (se arma antes que el centro para que el recuadro tome el resto)
+        der = ttk.Frame(medio)
+        der.pack(side="right", fill="y", padx=(16, 0))
+        ttk.Label(der, text="MODO", style="Section.TLabel").pack(anchor="w")
+        for valor, texto in self.MODOS:
+            ttk.Radiobutton(der, text=texto, value=valor, variable=self.v_modo,
+                            command=self._modo_cambiado).pack(anchor="w")
+        ttk.Checkbutton(der, text="Aplicar el modo a\ntodas las fotos", variable=self.v_todas,
+                        command=self._modo_cambiado).pack(anchor="w", pady=(6, 0))
+        ttk.Label(der, text="HOJA", style="Section.TLabel").pack(anchor="w", pady=(14, 2))
+        for texto, cmd in (("[Rotar]", self.rotar), ("[Detectar bordes]", self.detectar),
+                           ("[Toda la hoja]", self.toda_la_hoja)):
+            ttk.Button(der, text=texto, command=cmd).pack(anchor="w", pady=2)
+        ttk.Label(der, text="RESULTADO", style="Section.TLabel").pack(anchor="w", pady=(14, 2))
+        self.btn_ver = ttk.Button(der, text="[Ver resultado]", command=self.ver_resultado)
+        self.btn_ver.pack(anchor="w", pady=2)
+        ttk.Label(der, style="Muted.TLabel", justify="left", wraplength=190,
+                  text="Arrastrá los cuadrados verdes hasta las esquinas de la hoja. "
+                       "El giro se ve en el resultado."
+                  ).pack(anchor="w", pady=(14, 0))
+        # centro: vista previa con las asas
+        marco = tk.Frame(medio, background=LINEA, padx=1, pady=1)
+        marco.pack(side="left", padx=16)
+        self.lona = tk.Canvas(marco, width=self.LONA[0], height=self.LONA[1], background=PANEL,
+                              highlightthickness=0)
+        self.lona.pack()
+        self.lona.bind("<ButtonPress-1>", self._pulsar)
+        self.lona.bind("<B1-Motion>", self._arrastrando)
+        self.lona.bind("<ButtonRelease-1>", lambda e: setattr(self, "asa", None))
+
+    # --------------------------------------------------------- cargar fotos
+    def agregar_dialogo(self):
+        rutas = filedialog.askopenfilenames(
+            parent=self, title="Elegí las fotos",
+            initialdir=str(self.app.base or self.app.cfg.get("carpeta") or Path.home()),
+            filetypes=[("Fotos", "*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp"),
+                       ("Todos los archivos", "*.*")])
+        if rutas:
+            self.agregar_fotos(rutas)
+
+    def agregar_fotos(self, rutas):
+        """Lee las fotos en segundo plano: abre, vista previa y detección de la hoja."""
+        buenas, heic, raras = [], [], []
+        for r in rutas:
+            p = Path(r)
+            if p.suffix.lower() in self.EXT:
+                buenas.append(str(p))
+            elif p.suffix.lower() in (".heic", ".heif"):
+                heic.append(p.name)
+            else:
+                raras.append(p.name)
+        if heic:
+            messagebox.showwarning(
+                "Fotos HEIC", "Estas fotos están en formato HEIC (el de los iPhone) y no las puedo "
+                "leer:\n\n" + "\n".join(heic[:8]) + "\n\nExportalas como JPG desde el teléfono o "
+                "desde la app Fotos y volvé a agregarlas.", parent=self)
+        if raras:
+            messagebox.showwarning(
+                "Archivos que no son fotos", "No sé leer estos archivos:\n\n" + "\n".join(raras[:8])
+                + "\n\nSirven JPG, PNG, BMP, TIF y WEBP.", parent=self)
+        if not buenas:
+            return
+        self.contador += 1
+        prefijo = f"v{self.contador}_"
+        self.v_estado.set(f"Leyendo {len(buenas)} foto(s)…")
+        emit = lambda t, d: self.cola.put(("estado", d)) if t == "log" else None
+
+        def trabajo():
+            r = pdf_op({"op": "img_preparar", "rutas": buenas, "dir": str(self.tmp),
+                        "prefijo": prefijo, "lado": self.LADO}, emit)
+            self.cola.put(("fotos", r))
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    def _incorporar(self, r):
+        if r.get("error") in ("no_imagenes", "no_pymupdf"):
+            messagebox.showwarning("Falta un componente", AYUDA_IMAGENES, parent=self)
+            self.v_estado.set("No se pudieron preparar los componentes.")
+            return
+        if "error" in r:
+            messagebox.showerror("No se pudieron leer las fotos", r["error"], parent=self)
+            return
+        malas = []
+        for f in r["fotos"]:
+            if "error" in f:
+                malas.append(f"{Path(f['ruta']).name}: no se pudo abrir (¿está dañada o no es una "
+                             "imagen?)")
+                continue
+            self.fotos.append({
+                "ruta": Path(f["ruta"]), "nombre": Path(f["ruta"]).name, "ancho": f["ancho"],
+                "alto": f["alto"], "vista": f["vista"], "vw": f["vista_ancho"],
+                "vh": f["vista_alto"], "esquinas": [list(p) for p in f["esquinas"]],
+                "auto": [list(p) for p in f["esquinas"]],
+                "modo": self.v_modo.get(), "giro": 0})
+        if malas:
+            messagebox.showwarning("Fotos que no se pudieron abrir", "\n".join(malas[:8]),
+                                   parent=self)
+        self._llenar_lista(self.actual if self.actual is not None else (0 if self.fotos else None))
+        self.v_estado.set(f"{len(self.fotos)} foto(s) en la lista. Ajustá las esquinas de cada "
+                          "una si hace falta.")
+
+    # ------------------------------------------------------------------ lista
+    def _llenar_lista(self, sel=None):
+        self.lista.delete(0, "end")
+        for i, f in enumerate(self.fotos):
+            self.lista.insert("end", f"{i + 1}. {f['nombre']}")
+        self.actual = sel if self.fotos and sel is not None else None
+        if self.actual is not None:
+            self.actual = min(self.actual, len(self.fotos) - 1)
+            self.lista.selection_set(self.actual)
+            self.lista.see(self.actual)
+            self.v_modo.set(self.fotos[self.actual]["modo"])
+        self.viendo = False
+        self.btn_ver.config(text="[Ver resultado]")
+        self._mostrar()
+
+    def _elegida(self, _=None):
+        sel = self.lista.curselection()
+        if not sel or sel[0] == self.actual:
+            return
+        self.actual = sel[0]
+        self.v_modo.set(self.fotos[self.actual]["modo"])
+        self.viendo = False
+        self.btn_ver.config(text="[Ver resultado]")
+        self._mostrar()
+
+    def quitar(self):
+        if self.actual is None or self._ocupado():
+            return
+        del self.fotos[self.actual]
+        self._llenar_lista(self.actual)
+
+    def mover(self, delta):
+        i, j = self.actual, (self.actual or 0) + delta
+        if i is None or not 0 <= j < len(self.fotos) or self._ocupado():
+            return
+        self.fotos[i], self.fotos[j] = self.fotos[j], self.fotos[i]
+        self._llenar_lista(j)
+
+    def _ocupado(self):
+        if self.creando:
+            self.v_estado.set("Esperá a que termine de armarse el PDF.")
+        return self.creando
+
+    # ---------------------------------------------------------- vista previa
+    def _mostrar(self):
+        self.lona.delete("all")
+        self.imagen = None
+        if self.actual is None:
+            self.lona.create_text(self.LONA[0] // 2, self.LONA[1] // 2, fill=GRIS, justify="center",
+                                  font=(self.app.fam, 11),
+                                  text="SIN FOTOS.\n\nTocá [ + AGREGAR FOTOS ]")
+            return
+        f = self.fotos[self.actual]
+        if self.viendo and self.resultado:
+            ruta, (vw, vh) = self.resultado["vista"], (self.resultado["vw"], self.resultado["vh"])
+        else:
+            ruta, (vw, vh) = f["vista"], (f["vw"], f["vh"])
+        self.imagen = tk.PhotoImage(file=ruta)
+        ox, oy = (self.LONA[0] - vw) // 2, (self.LONA[1] - vh) // 2
+        self.lona.create_image(ox, oy, anchor="nw", image=self.imagen, tags="foto")
+        self.origen = (ox, oy, vw / float(f["ancho"]))
+        if not self.viendo:
+            self._dibujar_asas()
+
+    def _a_lona(self, x, y):
+        ox, oy, e = self.origen
+        return ox + x * e, oy + y * e
+
+    def _a_original(self, cx, cy):
+        ox, oy, e = self.origen
+        return (cx - ox) / e, (cy - oy) / e
+
+    def _dibujar_asas(self):
+        self.lona.delete("asas")
+        f = self.fotos[self.actual]
+        puntos = [self._a_lona(*p) for p in f["esquinas"]]
+        self.lona.create_polygon([c for p in puntos for c in p], outline=ACENTO, fill="",
+                                 width=2, tags=("asas", "poli"))
+        for i, (cx, cy) in enumerate(puntos):
+            self.lona.create_rectangle(cx - self.ASA, cy - self.ASA, cx + self.ASA, cy + self.ASA,
+                                       fill=ACENTO, outline=TINTA, width=1,
+                                       tags=("asas", "asa", f"asa{i}"))
+
+    def _pulsar(self, e):
+        if self.actual is None or self.viendo:
+            return
+        puntos = [self._a_lona(*p) for p in self.fotos[self.actual]["esquinas"]]
+        d, i = min(((px - e.x) ** 2 + (py - e.y) ** 2, k) for k, (px, py) in enumerate(puntos))
+        self.asa = i if d <= 26 ** 2 else None
+
+    def _arrastrando(self, e):
+        if self.asa is not None:
+            self._arrastrar(self.asa, e.x, e.y)
+
+    def _arrastrar(self, i, cx, cy):
+        """Lleva la esquina i al punto (cx, cy) del recuadro, sin salirse de la foto."""
+        if self.actual is None or self.viendo or self._ocupado():
+            return
+        f = self.fotos[self.actual]
+        x, y = self._a_original(cx, cy)
+        f["esquinas"][i] = [min(max(x, 0), f["ancho"]), min(max(y, 0), f["alto"])]
+        self._dibujar_asas()
+
+    # --------------------------------------------------------------- controles
+    def detectar(self):
+        if self.actual is None or self._ocupado():
+            return
+        self.fotos[self.actual]["esquinas"] = [list(p) for p in self.fotos[self.actual]["auto"]]
+        self._volver_a_editar()
+        self.v_estado.set("Esquinas detectadas de nuevo.")
+
+    def toda_la_hoja(self):
+        if self.actual is None or self._ocupado():
+            return
+        f = self.fotos[self.actual]
+        f["esquinas"] = [[0, 0], [f["ancho"], 0], [f["ancho"], f["alto"]], [0, f["alto"]]]
+        self._volver_a_editar()
+        self.v_estado.set("Se toma la foto entera, sin recortar.")
+
+    def rotar(self):
+        if self.actual is None or self._ocupado():
+            return
+        f = self.fotos[self.actual]
+        f["giro"] = (f["giro"] + 90) % 360
+        self.v_estado.set(f"Giro de esta foto: {f['giro']} grados (hacia la derecha). "
+                          "Se ve en el resultado.")
+        if self.viendo:
+            self._procesar_vista()
+
+    def _modo_cambiado(self):
+        if self._ocupado():
+            return
+        if self.actual is not None:
+            for f in (self.fotos if self.v_todas.get() else [self.fotos[self.actual]]):
+                f["modo"] = self.v_modo.get()
+            if self.viendo:
+                self._procesar_vista()
+
+    def _volver_a_editar(self):
+        self.viendo = False
+        self.btn_ver.config(text="[Ver resultado]")
+        self._mostrar()
+
+    def ver_resultado(self):
+        if self.actual is None:
+            messagebox.showinfo("Sin fotos", "Primero agregá una foto.", parent=self)
+            return
+        if self.viendo:
+            self._volver_a_editar()
+        elif not self._ocupado():
+            self._procesar_vista()
+
+    def _procesar_vista(self):
+        """Procesa la foto actual con sus ajustes y la muestra en el recuadro."""
+        f, idx = self.fotos[self.actual], self.actual
+        self.contador += 1
+        base = self.tmp / f"r{self.contador}"
+        self.v_estado.set("Procesando la foto…")
+        emit = lambda t, d: self.cola.put(("estado", d)) if t == "log" else None
+
+        def trabajo():
+            r = pdf_op({"op": "img_procesar", "ruta": str(f["ruta"]), "esquinas": f["esquinas"],
+                        "rotacion": f["giro"], "modo": f["modo"], "salida": str(base) + ".jpg",
+                        "vista": str(base) + ".png", "lado": self.LADO}, emit)
+            self.cola.put(("vista", (idx, f["ruta"], r)))
+        threading.Thread(target=trabajo, daemon=True).start()
+
+    # --------------------------------------------------------------- crear PDF
+    def crear_pdf(self):
+        if self.creando:
+            return
+        if not self.fotos:
+            messagebox.showinfo("Sin fotos", "Primero agregá al menos una foto.", parent=self)
+            return
+        destino = filedialog.asksaveasfilename(
+            parent=self, title="Dónde guardar el PDF", defaultextension=".pdf",
+            initialfile="Escaneo.pdf", filetypes=[("PDF", "*.pdf")],
+            initialdir=str(self.app.base or self.app.cfg.get("carpeta") or Path.home()))
+        if not destino:
+            return
+        destino = Path(destino)
+        if destino.suffix.lower() != ".pdf":
+            destino = destino.with_name(destino.name + ".pdf")
+        datos = [{"ruta": f["ruta"], "nombre": f["nombre"], "esquinas": [list(p) for p in f["esquinas"]],
+                  "giro": f["giro"], "modo": f["modo"]} for f in self.fotos]
+        pagina = self.v_pagina.get()
+        self.creando, self.cancelar = True, False
+        self.btn_crear.config(state="disabled")
+        threading.Thread(target=self._crear, args=(datos, destino, pagina), daemon=True).start()
+
+    def _crear(self, datos, destino, pagina):
+        emit = lambda t, d: self.cola.put(("estado", d)) if t == "log" else None
+        n = len(datos)
+        try:
+            jpgs = []
+            for i, d in enumerate(datos, 1):
+                if self.cancelar:
+                    return
+                self.cola.put(("estado", f"Procesando foto {i} de {n}: {d['nombre']}…"))
+                salida = self.tmp / f"p{i:03d}.jpg"
+                r = pdf_op({"op": "img_procesar", "ruta": str(d["ruta"]), "esquinas": d["esquinas"],
+                            "rotacion": d["giro"], "modo": d["modo"], "salida": str(salida)}, emit)
+                if "error" in r:
+                    self.cola.put(("error", (r["error"], d["nombre"])))
+                    return
+                jpgs.append(str(salida))
+            self.cola.put(("estado", f"Armando el PDF de {n} página(s)…"))
+            r = pdf_op({"op": "img_pdf", "imagenes": jpgs, "salida": str(destino),
+                        "pagina": pagina}, emit)
+            if "error" in r:
+                self.cola.put(("error", (r["error"], None)))
+                return
+            self.cola.put(("listo", (destino, n)))
+        except Exception as e:
+            self.cola.put(("error", (str(e), None)))
+        finally:
+            self.cola.put(("libre", None))
+
+    # ------------------------------------------------------------------- cola
+    def _sondear(self):
+        try:
+            if not self.winfo_exists():
+                return
+            while True:
+                tipo, dato = self.cola.get_nowait()
+                if tipo == "estado":
+                    self.v_estado.set(str(dato).strip()[:200])
+                elif tipo == "fotos":
+                    self._incorporar(dato)
+                elif tipo == "vista":
+                    idx, ruta, r = dato
+                    if r.get("error") in ("no_imagenes", "no_pymupdf"):
+                        messagebox.showwarning("Falta un componente", AYUDA_IMAGENES, parent=self)
+                    elif "error" in r:
+                        messagebox.showerror("No se pudo procesar la foto",
+                                             f"{Path(ruta).name}: {r['error']}", parent=self)
+                        self.v_estado.set("No se pudo procesar la foto.")
+                    elif idx == self.actual:
+                        self.resultado = {"vista": r["vista"], "vw": r["vista_ancho"],
+                                          "vh": r["vista_alto"]}
+                        self.viendo = True
+                        self.btn_ver.config(text="[Volver a editar]")
+                        self._mostrar()
+                        self.v_estado.set("Así queda esta foto. Tocá [Volver a editar] para "
+                                          "ajustar.")
+                elif tipo == "error":
+                    msg, nombre = dato
+                    if msg in ("no_imagenes", "no_pymupdf"):
+                        messagebox.showwarning("Falta un componente", AYUDA_IMAGENES, parent=self)
+                    else:
+                        messagebox.showerror(
+                            "No se pudo crear el PDF",
+                            (f"Falló la foto «{nombre}»:\n" if nombre else "") + msg, parent=self)
+                    self.v_estado.set("No se pudo crear el PDF.")
+                elif tipo == "listo":
+                    destino, n = dato
+                    self.v_estado.set(f"Listo: {destino.name}, {n} página(s). Está en {destino.parent}.")
+                    self.app.decir_accion("escaner", n=n)
+                    if self.app.v_abrir.get():
+                        self.app._abrir(destino)
+                elif tipo == "libre":
+                    self.creando = False
+                    self.btn_crear.config(state="normal")
+        except queue.Empty:
+            pass
+        except tk.TclError:
+            return
+        self.after(100, self._sondear)
+
+    # ----------------------------------------------------------------- cierre
+    def _cerrar(self):
+        if self.creando and not messagebox.askyesno(
+                "Se está creando el PDF", "Todavía se está armando el PDF. ¿Cerrar igual y "
+                "cancelarlo?", parent=self):
+            return
+        self.destroy()
+
+    def _al_destruir(self, e):
+        if e.widget is self:
+            self.cancelar = True
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+
 # ------------------------------------------------------------------------- GUI
 # Pantalla de fósforo verde. Verde fuerte (y entre corchetes) = lo que se toca; verde suave =
 # información; verde pálido = lo importante; ámbar = advertencia; rojo = error.
@@ -1458,6 +2190,9 @@ class Guion:
         "listo": ("Listo para recibir archivos.", (
             "TERMINAL OPERATIVA. ESPERANDO EXPEDIENTES DEL OPERADOR.",
             "MESA DE ENTRADAS ABIERTA. TOME NÚMERO Y AGUARDE SER LLAMADO.")),
+        "escaner": ("Listo: se escanearon {n} foto(s) y se armó el PDF.", (
+            "SE ESCANEARON {n} FOTO(S). EL DEPARTAMENTO DE FOTOCOPIAS SE SIENTE AMENAZADO.",
+            "SE DIGITALIZARON {n} FOTO(S). LOS ORIGINALES NO FUERON TOCADOS.")),
         "curioso": (None, (
             "SE DETECTÓ CURIOSIDAD NO AUTORIZADA. SE INICIÓ UN EXPEDIENTE. RESPUESTA "
             "ESTIMADA: 30 A 45 DÍAS HÁBILES.",)),
@@ -2573,7 +3308,7 @@ class App(_BaseTk):
         self.expediente = ""
         self.reglas = list(self.cfg.get("reglas", []))
         self.herr_pdfs = []
-        self._win_herr = self._win_auto = None
+        self._win_herr = self._win_auto = self._win_esc = None
 
         v = lambda k, d: self.cfg.get(k, d)
         modo_prev = v("salida_modo", "subcarpeta" if v("subcarpeta", False) else "junto")
@@ -2738,6 +3473,7 @@ class App(_BaseTk):
         mas = tk.Menu(self, tearoff=0)
         mas.add_command(label="  Herramientas PDF (dividir, comprimir, eliminar páginas)…  ",
                         command=self.abrir_herramientas)
+        mas.add_command(label="  Escanear fotos a PDF (como CamScanner)…", command=self.abrir_escaner)
         mas.add_command(label="  Carpetas automáticas…", command=self.abrir_auto)
         mas.add_separator()
         mas.add_command(label="  Enviar los PDF a PDFsam…", command=self.enviar_pdfsam)
@@ -2944,6 +3680,14 @@ class App(_BaseTk):
 
     def abrir_herramientas(self):
         self._ventana("_win_herr", "Herramientas PDF", self._tab_herramientas, "780x720")
+
+    def abrir_escaner(self):
+        w = self._win_esc
+        if w is not None and w.winfo_exists():
+            w.deiconify()
+            w.lift()
+            return
+        self._win_esc = Escaner(self)
 
     def abrir_auto(self):
         self._ventana("_win_auto", "Carpetas automáticas", self._tab_auto, "820x640")

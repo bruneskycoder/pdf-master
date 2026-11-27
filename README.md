@@ -11,6 +11,7 @@ Convertí tus Word y PowerPoint a PDF de a muchos por vez y, si querés, unilos 
 - **Convierte** Word (`.doc`, `.docx`) y PowerPoint (`.ppt`, `.pptx`) a PDF, de a muchos por vez.
 - **Une** todo en un solo PDF. Puede agregar una página en blanco después de cada documento con páginas impares, para que al imprimir doble faz cada trabajo empiece en una hoja nueva. También puede numerar las páginas con un pie.
 - **Elige qué páginas usar** de cada archivo al unir (doble clic en la columna «Páginas a usar»).
+- **Escanea fotos a PDF** (`MÁS… » Escanear fotos a PDF`), como CamScanner pero en tu PC: detecta la hoja en cada foto, te deja ajustar las cuatro esquinas, la endereza, la limpia (aclarar, blanco y negro o gris) y arma un PDF en A4 o del tamaño de la foto. Las fotos no salen de tu computadora.
 - **Guarda los PDF** donde digas: junto al original, en una subcarpeta «PDF» o en otra carpeta. Antes de convertir te muestra dónde van a quedar.
 - En el botón **MÁS…**: dividir, comprimir y eliminar páginas (con miniaturas); carpetas automáticas que procesan solas lo que les pongas; enviar los PDF a PDFsam.
 
@@ -55,6 +56,7 @@ Atajos: `Ctrl+O` agrega archivos, `Ctrl+Enter` convierte (pasa por el modo intru
 
 - **LibreOffice** (gratis, unos 350 MB) para convertir Word y PowerPoint. Lo descarga de la página oficial y Windows pide permiso de administrador: elegí «Sí». Si ya lo tenés, lo usa.
 - **El componente PDF** (PyMuPDF) para unir, dividir y comprimir. Se instala con Python en un minuto.
+- **El componente de imágenes** (Pillow) para escanear fotos. Se instala solo la primera vez que usás el escáner.
 - **Arrastrar y soltar** se instala en segundo plano y funciona desde la segunda vez que abrís el programa.
 
 Para unir PDF que ya tenés no hace falta LibreOffice: agregalos, tildá «Unir todo en un solo PDF» y convertí.
@@ -87,6 +89,7 @@ Decisiones técnicas que salieron de problemas reales:
 
 - **LibreOffice como único motor de conversión.** Las primeras versiones usaban Word por automatización (`docx2pdf`, `pywin32`) y fallaban según con qué Python se abriera el programa. LibreOffice en modo sin ventana no depende de eso. Se lo llama de a 10 archivos, con un perfil temporal, y si un archivo falla se reintenta solo con una copia de nombre simple.
 - **El motor PDF corre aparte.** El código de PyMuPDF va en un proceso separado que puede usar cualquier Python de la PC que lo tenga, y devuelve el resultado en JSON. Así el programa funciona aunque se abra con un Python sin PyMuPDF.
+- **El escáner se hizo local** porque no encontramos ninguna forma oficial de usar una cuenta Premium de CamScanner desde otro programa: la empresa que lo hace vende su motor a empresas, por contrato (consultado el 2026-11-27), y además habría que subir las fotos de los documentos a un servidor ajeno. Lo hace el mismo proceso aparte que el motor PDF, con Pillow: detecta la hoja (umbral de Otsu sobre una versión chica de la foto), corrige la perspectiva resolviendo el sistema de ecuaciones a mano (sin numpy), saca sombras dividiendo por el fondo desenfocado y arma el PDF con PyMuPDF. La ventana solo muestra imágenes PNG: no importa Pillow.
 - **Las fuentes viajan adentro del archivo** (en base64) para no romper el «un solo archivo».
 - **Los recuadros y las barras de bloques se dibujan**, no se escriben con caracteres: ninguna de las dos fuentes trae `╔═╗` ni `█`, y dibujados quedan nítidos en cualquier pantalla.
 - **La sátira tiene reglas escritas** (en `CLAUDE.md`): nunca inventa datos sobre tus archivos, nunca tapa un error real y siempre se puede apagar.
@@ -97,6 +100,7 @@ Decisiones técnicas que salieron de problemas reales:
 - **La capa de vidrio** (solo Windows) se prueba en la integración continua, pero no con dos monitores, con escalas de pantalla distintas, ni al arrastrar la ventana rápido (puede quedar un instante atrás). Las capturas de este README son de Linux, donde la capa no existe.
 - **Arrastrar y soltar**, y que **PDFsam** reciba los archivos que le manda el programa.
 - **La instalación de LibreOffice** en una PC limpia con permisos de administrador.
+- **El escáner** se probó con fotos sintéticas (hoja torcida sobre fondo oscuro), no con fotos reales de cámara: la detección automática puede fallar con fondos claros o cargados, y para eso están las esquinas arrastrables y `[Toda la hoja]`. Las fotos HEIC de iPhone no se leen: hay que exportarlas como JPG.
 - **La compresión** se probó con PDF sintéticos: cuánto reduce un PDF real con fotos depende del archivo.
 
 Si encontrás un error, abrí un [issue](../../issues) con lo que dice «Ver registro».
@@ -116,5 +120,5 @@ El código está en un solo archivo, en este orden: motor sin interfaz (`filtrar
 
 - **Código:** [MIT](LICENSE). © 2026 Bruno Gutiérrez ([@bruneskycoder](https://github.com/bruneskycoder)).
 - **Fuentes incluidas:** VT323 y Share Tech Mono, bajo SIL Open Font License 1.1 ([LICENSE-FUENTES.txt](LICENSE-FUENTES.txt)).
-- **Lo que el programa instala** tiene su propia licencia y no se distribuye con este repositorio: LibreOffice (MPL 2.0), PyMuPDF (AGPL 3.0 o comercial) y tkinterdnd2 (MIT). Si algún día se empaqueta un `.exe` con PyMuPDF adentro, hay que revisar las condiciones de la AGPL.
+- **Lo que el programa instala** tiene su propia licencia y no se distribuye con este repositorio: LibreOffice (MPL 2.0), PyMuPDF (AGPL 3.0 o comercial), Pillow (MIT-CMU, licencia HPND) y tkinterdnd2 (MIT). Si algún día se empaqueta un `.exe` con PyMuPDF adentro, hay que revisar las condiciones de la AGPL.
 - PDFsam es un programa aparte, sin vínculo con este proyecto.
