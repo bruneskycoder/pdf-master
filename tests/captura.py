@@ -112,7 +112,34 @@ def trabajando():
     app.trabajando = False
     app.abrir_herramientas()
     app._win_herr.geometry("+0+0")
-    app.after(800, lambda: (foto(app._win_herr, "herramientas"), app.destroy()))
+    app.after(800, lambda: (foto(app._win_herr, "herramientas"), app.after(100, escanear)))
+
+
+def escanear():
+    """Ventana del escáner con dos fotos sintéticas (una hoja torcida sobre un fondo oscuro)."""
+    from PIL import Image, ImageDraw
+    fotos = []
+    for i, cuad in enumerate(([(120, 90), (690, 130), (660, 520), (90, 480)],
+                              [(150, 60), (640, 100), (700, 540), (110, 500)])):
+        im = Image.new("RGB", (800, 600), (45, 38, 30))
+        d = ImageDraw.Draw(im)
+        d.polygon(cuad, fill=(238, 234, 222))
+        for k in range(11):
+            d.line([(170, 160 + k * 28), (560, 166 + k * 28)], fill=(40, 40, 60), width=3)
+        f = tmp / f"Hoja {i + 1}.jpg"
+        im.save(f, quality=90)
+        fotos.append(str(f))
+    app.abrir_escaner()
+    esc = app._win_esc
+    esc.geometry("+0+0")
+    esc.agregar_fotos(fotos)
+
+    def listo():
+        if len(esc.fotos) < 2:
+            return app.after(200, listo)
+        foto(esc, "escaner")
+        app.destroy()
+    app.after(200, listo)
 
 
 app.after(700, arranque)
